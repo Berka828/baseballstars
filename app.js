@@ -433,9 +433,6 @@ function updateGame() {
 function resolvePitch() {
   pitchCount++;
 
-  function resolvePitch() {
-  pitchCount++;
-
   const zoneTop = strikeZone.y;
   const zoneBottom = strikeZone.y + strikeZone.h;
   const zoneCenterY = strikeZone.y + strikeZone.h / 2;

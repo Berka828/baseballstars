@@ -250,12 +250,20 @@ async function loop() {
     const torsoHeight = Math.abs(hipScreen.y - shoulderScreen.y);
     const shoulderSpan = Math.abs(shoulderScreen.x - leftShoulderScreen.x);
 
-    loadBox = {
-      x: shoulderScreen.x - Math.max(shoulderSpan * 0.15, 20),
-      y: shoulderScreen.y - Math.max(torsoHeight * 0.35, 40),
-      w: Math.max(shoulderSpan * 0.95, 95),
-      h: Math.max(torsoHeight * 0.75, 110)
-    };
+    // ===========================
+// TRUE PITCH WIND-UP BOX
+// ===========================
+
+const boxW = Math.max(shoulderSpan * 0.8, 100);
+const boxH = Math.max(torsoHeight * 0.7, 120);
+
+// place box BEHIND throwing shoulder
+loadBox = {
+  x: shoulderScreen.x - boxW - 45,
+  y: shoulderScreen.y - boxH * 0.25,
+  w: boxW,
+  h: boxH
+};
 
     drawSilhouette(keypoints);
 
@@ -303,7 +311,7 @@ async function loop() {
 
       const movedOutOfBox = !pointInRect(wristScreen.x, wristScreen.y, loadBox);
 
-      if (movedOutOfBox && forwardX > 14 && power > 20) {
+      if (movedOutOfBox && forwardX > 40 && power > 45) {
         triggerThrow(power);
       } else {
         setStatus("Loaded. Throw forward now.");
@@ -326,12 +334,17 @@ function triggerThrow(power) {
   else lastThrowLabel = "SUPER HEATER";
 
   ball = {
-    x: 175,
-    y: 500,
-    vx: 6.2 + strength * 0.075,
-    vy: -4.3 - strength * 0.018,
-    r: 14
-  };
+  x: 175,
+  y: 500,
+
+  // MUCH stronger forward velocity
+  vx: 14 + strength * 0.18,
+
+  // cleaner arc
+  vy: -6.5 - strength * 0.03,
+
+  r: 14
+};
 
   makeBurst(175, 500, 1.2, "#7fd6ff");
   makeRing(175, 500, "#7fd6ff");

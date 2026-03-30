@@ -14,6 +14,12 @@ let particles = [];
 let throwCooldown = false;
 let currentPower = 0;
 let lastThrowLabel = "READY";
+let score = 0;
+let pitchCount = 0;
+let maxPitches = 5;
+let gameOver = false;
+let finalRank = "";
+let scoreFlash = "";
 let strikeZone = {
   x: 690,
   y: 180,
@@ -179,7 +185,7 @@ function throwBall(power) {
 }
 
 function updateGame() {
-  if (ball) {
+  if (ball && !gameOver) {
     ball.vy += 0.36;
     ball.x += ball.vx;
     ball.y += ball.vy;
@@ -193,9 +199,20 @@ function updateGame() {
       alpha: 1
     });
 
-    if (ball.y > 345 || ball.x > gameCanvas.width - 20) {
-      makeBurst(ball.x, Math.min(ball.y, 345), 1);
+    // BALL REACHES STRIKE ZONE AREA
+    if (ball.x >= strikeZone.x) {
+      checkPitchResult();
+      makeBurst(ball.x, ball.y, 1);
       ball = null;
+    }
+
+    // BALL MISSES ENTIRE SCREEN
+    if (ball && (ball.y > 380 || ball.x > gameCanvas.width)) {
+      scoreFlash = "MISS";
+      pitchCount++;
+      makeBurst(ball.x, Math.min(ball.y, 345), 0.7);
+      ball = null;
+      checkGameOver();
     }
   }
 
@@ -207,6 +224,56 @@ function updateGame() {
   });
 
   particles = particles.filter((p) => p.size > 0.8 && p.alpha > 0.05);
+}
+
+function checkPitchResult() {
+  pitchCount++;
+
+  const centerY = strikeZone.y + strikeZone.h / 2;
+  const distanceFromCenter = Math.abs(ball.y - centerY);
+
+  if (
+    ball.y >= strikeZone.y &&
+    ball.y <= strikeZone.y + strikeZone.h
+  ) {
+    // PERFECT PITCH
+    if (distanceFromCenter < 15) {
+      score += 200;
+      scoreFlash = "PERFECT +200";
+    }
+
+    // STRIKE
+    else {
+      score += 100;
+      scoreFlash = "STRIKE +100";
+    }
+
+    // speed bonus
+    if (currentPower > 120) {
+      score += 50;
+      scoreFlash += " FASTBALL BONUS +50";
+    }
+  } else {
+    scoreFlash = "BALL / MISS";
+  }
+
+  checkGameOver();
+}
+
+function checkGameOver() {
+  if (pitchCount >= maxPitches) {
+    gameOver = true;
+
+    if (score < 200) {
+      finalRank = "ROOKIE";
+    } else if (score < 400) {
+      finalRank = "ALL-STAR";
+    } else if (score < 650) {
+      finalRank = "ACE PITCHER";
+    } else {
+      finalRank = "BXCM LEGEND";
+    }
+  }
 }
 
 function makeBurst(x, y, scale) {
@@ -335,6 +402,15 @@ function drawGame() {
   gameCtx.font = "bold 14px Arial";
   gameCtx.fillText("PITCH POWER", 20, 16);
 
+  // SCOREBOARD
+gameCtx.fillStyle = "rgba(0,0,0,0.5)";
+gameCtx.fillRect(560, 20, 220, 60);
+
+gameCtx.fillStyle = "white";
+gameCtx.font = "bold 18px Arial";
+gameCtx.fillText(`Score: ${score}`, 580, 45);
+gameCtx.fillText(`Pitch: ${pitchCount}/${maxPitches}`, 580, 70);
+  
   // =======================
   // 4. BIG THROW FEEDBACK TEXT
   // =======================
@@ -356,6 +432,10 @@ function drawGame() {
   gameCtx.fillText(lastThrowLabel, gameCanvas.width / 2, 70);
   gameCtx.textAlign = "start";
 
+  gameCtx.font = "bold 22px Arial";
+gameCtx.fillStyle = "#ffe066";
+gameCtx.fillText(scoreFlash, gameCanvas.width / 2 - 120, 105);
+  
   // =======================
   // 5. BALL
   // =======================
@@ -385,4 +465,20 @@ function drawGame() {
     gameCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     gameCtx.fill();
   });
+  if (gameOver) {
+  gameCtx.fillStyle = "rgba(0,0,0,0.7)";
+  gameCtx.fillRect(180, 110, 440, 180);
+
+  gameCtx.fillStyle = "white";
+  gameCtx.font = "bold 40px Arial";
+  gameCtx.fillText("CHALLENGE COMPLETE", 230, 160);
+
+  gameCtx.font = "bold 34px Arial";
+  gameCtx.fillStyle = "#ffe066";
+  gameCtx.fillText(finalRank, 300, 210);
+
+  gameCtx.fillStyle = "white";
+  gameCtx.font = "bold 26px Arial";
+  gameCtx.fillText(`FINAL SCORE: ${score}`, 280, 255);
+}
 }

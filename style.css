@@ -6,10 +6,27 @@ body {
   padding-top: 30px;
 }
 
-#webcam {
+.videoWrap {
+  position: relative;
   width: 640px;
   height: 480px;
-  background: black;
+  margin: 20px auto;
   border: 3px solid white;
-  margin-top: 20px;
+  background: black;
+}
+
+#webcam,
+#overlay {
+  position: absolute;
+  inset: 0;
+  width: 640px;
+  height: 480px;
+}
+
+#webcam {
+  object-fit: cover;
+}
+
+#overlay {
+  pointer-events: none;
 }

@@ -11,9 +11,7 @@ let detector = null;
 let started = false;
 let cameraStarted = false;
 
-// =========================
-// GAME STATE
-// =========================
+// gameplay
 let ball = null;
 let particles = [];
 let rings = [];
@@ -31,23 +29,20 @@ let lastThrowLabel = "READY";
 let scoreFlash = "";
 let scoreFlashTimer = 0;
 
+// throw state
 let wristHistory = [];
 let throwCooldown = false;
 let resultPauseTimer = 0;
 let readyPoseArmed = false;
 let readyPoseFrames = 0;
-
-// simple anti-spam lock
 let readyLockout = false;
 
-// UI / gameplay layout
+// layout
 const strikeZone = { x: 1135, y: 265, w: 120, h: 170 };
 const mitt = { x: 1195, y: 350, r: 52, glow: 0.5 };
 const miniMap = { x: 40, y: 620, w: 280, h: 105 };
 
-// =========================
-// STATUS UI IMPROVEMENT
-// =========================
+// larger status UI under camera panel
 (function improveStatusUI() {
   const posePanel = document.querySelector(".posePanel");
   if (posePanel && statusText) {
@@ -71,23 +66,13 @@ function setStatus(msg) {
   statusText.textContent = msg;
 }
 
-// =========================
-// SIMPLE SOUND SYSTEM
-// =========================
+// audio
 let audioCtx = null;
-let soundEnabled = true;
-
 function ensureAudio() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume();
-  }
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === "suspended") audioCtx.resume();
 }
-
 function playTone(freq = 440, duration = 0.08, type = "sine", volume = 0.04, slideTo = null) {
-  if (!soundEnabled) return;
   ensureAudio();
   const now = audioCtx.currentTime;
   const osc = audioCtx.createOscillator();
@@ -95,46 +80,30 @@ function playTone(freq = 440, duration = 0.08, type = "sine", volume = 0.04, sli
 
   osc.type = type;
   osc.frequency.setValueAtTime(freq, now);
-  if (slideTo) {
-    osc.frequency.linearRampToValueAtTime(slideTo, now + duration);
-  }
+  if (slideTo) osc.frequency.linearRampToValueAtTime(slideTo, now + duration);
 
   gain.gain.setValueAtTime(volume, now);
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
   osc.connect(gain);
   gain.connect(audioCtx.destination);
-
   osc.start(now);
   osc.stop(now + duration);
 }
-
-function playWhoosh() {
-  playTone(420, 0.12, "sawtooth", 0.03, 160);
-}
-
+function playWhoosh() { playTone(420, 0.12, "sawtooth", 0.03, 160); }
 function playStrike() {
   playTone(760, 0.08, "square", 0.04);
   setTimeout(() => playTone(960, 0.09, "square", 0.035), 55);
 }
-
 function playPerfect() {
   playTone(620, 0.08, "triangle", 0.04);
   setTimeout(() => playTone(860, 0.08, "triangle", 0.04), 55);
   setTimeout(() => playTone(1120, 0.12, "triangle", 0.04), 110);
 }
+function playMiss() { playTone(220, 0.14, "sawtooth", 0.035, 140); }
+function playReset() { playTone(520, 0.06, "triangle", 0.03); }
 
-function playMiss() {
-  playTone(220, 0.14, "sawtooth", 0.035, 140);
-}
-
-function playReset() {
-  playTone(520, 0.06, "triangle", 0.03);
-}
-
-// =========================
-// BUTTONS
-// =========================
+// buttons
 startBtn.onclick = async () => {
   try {
     ensureAudio();
@@ -148,11 +117,9 @@ startBtn.onclick = async () => {
       });
 
       video.srcObject = stream;
-
       await new Promise((resolve) => {
         video.onloadedmetadata = () => resolve();
       });
-
       await video.play();
 
       overlay.width = video.videoWidth || 640;
@@ -165,16 +132,13 @@ startBtn.onclick = async () => {
 
       detector = await poseDetection.createDetector(
         poseDetection.SupportedModels.MoveNet,
-        {
-          modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
-        }
+        { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
       );
 
       cameraStarted = true;
     }
 
-    setStatus("Bring your throwing hand near your shoulder and hold for a moment.");
-
+    setStatus("Bring your throwing hand near your shoulder.");
     if (!started) {
       started = true;
       requestAnimationFrame(loop);
@@ -215,13 +179,11 @@ function resetGame() {
   readyLockout = false;
 
   playReset();
-  setStatus("Game reset. Load your arm near your shoulder to start pitching.");
+  setStatus("Game reset. Bring your hand near your shoulder.");
   drawGame();
 }
 
-// =========================
-// MAIN LOOP
-// =========================
+// main loop
 async function loop() {
   requestAnimationFrame(loop);
 
@@ -244,62 +206,49 @@ async function loop() {
     drawSilhouette(keypoints);
 
     const rightWrist = findKeypoint(keypoints, "right_wrist");
-    const rightElbow = findKeypoint(keypoints, "right_elbow");
     const rightShoulder = findKeypoint(keypoints, "right_shoulder");
 
     if (
-      !rightWrist || !rightElbow || !rightShoulder ||
+      !rightWrist || !rightShoulder ||
       rightWrist.score < 0.25 ||
-      rightElbow.score < 0.25 ||
       rightShoulder.score < 0.25
     ) {
       setStatus("Right arm not clear. Face camera and step back.");
       return;
     }
 
-    if (gameOver || throwCooldown || resultPauseTimer > 0 || ball) {
-      return;
-    }
-
-    const shoulderDist = dist(
-      rightWrist.x, rightWrist.y,
-      rightShoulder.x, rightShoulder.y
-    );
-
-    const elbowDist = dist(
-      rightWrist.x, rightWrist.y,
-      rightElbow.x, rightElbow.y
-    );
+    if (gameOver || throwCooldown || resultPauseTimer > 0 || ball) return;
 
     wristHistory.push({
       x: rightWrist.x,
       y: rightWrist.y,
       t: performance.now()
     });
-    if (wristHistory.length > 12) wristHistory.shift();
+    if (wristHistory.length > 14) wristHistory.shift();
 
-    // Easier, more forgiving loaded pose
-    const loadedPose = shoulderDist < 0.24 && elbowDist < 0.34;
+    // Simpler load logic:
+    // create a forgiving rectangular "load box" around the shoulder
+    const dxShoulder = Math.abs(rightWrist.x - rightShoulder.x);
+    const dyShoulder = Math.abs(rightWrist.y - rightShoulder.y);
+    const loadedPose = dxShoulder < 0.18 && dyShoulder < 0.18;
 
     if (!readyPoseArmed) {
       if (!readyLockout) {
         if (loadedPose) {
           readyPoseFrames++;
-          setStatus("Hold... loading pitch.");
+          setStatus("Hold... loaded pose found.");
         } else {
           readyPoseFrames = 0;
-          setStatus("Bring your hand near your shoulder to load the pitch.");
+          setStatus("Bring your hand near your shoulder.");
         }
 
-        if (readyPoseFrames >= 5) {
+        if (readyPoseFrames >= 4) {
           readyPoseArmed = true;
           setStatus("Loaded. Throw your arm forward now.");
         }
       } else {
         setStatus("Move your hand away, then reload near your shoulder.");
-        if (!loadedPose) {
-          readyLockout = false;
-        }
+        if (!loadedPose) readyLockout = false;
       }
       return;
     }
@@ -308,12 +257,14 @@ async function loop() {
       const first = wristHistory[0];
       const last = wristHistory[wristHistory.length - 1];
 
-      const dx = (last.x - first.x) * overlay.width;
-      const dy = (first.y - last.y) * overlay.height;
-      const power = Math.abs(dx) + Math.max(0, dy) * 0.28;
+      const moveX = (last.x - first.x) * overlay.width;
+      const moveY = (first.y - last.y) * overlay.height;
+      const power = Math.abs(moveX) + Math.max(0, moveY) * 0.22;
 
-      // less strict but still controlled
-      if (shoulderDist > 0.20 && power > 42) {
+      // require hand to move away from shoulder box after loading
+      const movedAwayFromShoulder = dxShoulder > 0.16 || dyShoulder > 0.16;
+
+      if (movedAwayFromShoulder && power > 26) {
         triggerThrow(power);
       } else {
         setStatus("Loaded. Throw your arm forward now.");
@@ -325,24 +276,21 @@ async function loop() {
   }
 }
 
-// =========================
-// THROW / SCORING
-// =========================
+// throw / scoring
 function triggerThrow(power) {
-  const strength = Math.min(power, 130);
-  currentPower = Math.min(280, strength * 2.0);
+  const strength = Math.min(power, 120);
+  currentPower = Math.min(280, strength * 2.1);
 
-  if (strength < 55) lastThrowLabel = "SOFT TOSS";
-  else if (strength < 78) lastThrowLabel = "FAST BALL";
-  else if (strength < 100) lastThrowLabel = "POWER PITCH";
+  if (strength < 45) lastThrowLabel = "SOFT TOSS";
+  else if (strength < 65) lastThrowLabel = "FAST BALL";
+  else if (strength < 90) lastThrowLabel = "POWER PITCH";
   else lastThrowLabel = "SUPER HEATER";
 
-  // deliberately slower and easier to read
   ball = {
     x: 175,
     y: 500,
-    vx: 7 + strength * 0.075,
-    vy: -4.7 - strength * 0.019,
+    vx: 6.5 + strength * 0.07,
+    vy: -4.5 - strength * 0.018,
     r: 14
   };
 
@@ -360,9 +308,7 @@ function triggerThrow(power) {
 
   setTimeout(() => {
     throwCooldown = false;
-    if (!gameOver) {
-      setStatus("Reload your arm near your shoulder for the next pitch.");
-    }
+    if (!gameOver) setStatus("Reload your arm near your shoulder.");
   }, 1100);
 }
 
@@ -395,9 +341,7 @@ function updateGame() {
       resultPauseTimer = 55;
       checkGameOver();
 
-      if (!gameOver) {
-        setStatus("Miss. Reload your arm for the next pitch.");
-      }
+      if (!gameOver) setStatus("Miss. Reload your arm.");
     }
   }
 
@@ -472,7 +416,6 @@ function resolvePitch() {
   } else {
     scoreFlash = "BALL";
     scoreFlashTimer = 58;
-
     makeBurst(ball.x, ball.y, 1.2, "#ff9f7a");
     makeRing(ball.x, ball.y, "#ff9f7a");
     playMiss();
@@ -480,9 +423,7 @@ function resolvePitch() {
 
   checkGameOver();
 
-  if (!gameOver) {
-    setStatus("Result locked. Reload your arm for the next pitch.");
-  }
+  if (!gameOver) setStatus("Result locked. Reload your arm.");
 }
 
 function checkGameOver() {
@@ -498,14 +439,11 @@ function checkGameOver() {
   }
 }
 
-// =========================
-// VISUAL FX
-// =========================
+// visual FX
 function addTrail(x, y) {
   for (let i = 0; i < 4; i++) {
     particles.push({
-      x,
-      y,
+      x, y,
       vx: Math.random() * 2 - 3,
       vy: Math.random() * 2 - 1.1,
       size: 4 + Math.random() * 8,
@@ -519,8 +457,7 @@ function makeBurst(x, y, scale, color) {
   const count = Math.floor(28 + scale * 34);
   for (let i = 0; i < count; i++) {
     particles.push({
-      x,
-      y,
+      x, y,
       vx: (Math.random() * 12 - 6) * scale,
       vy: (Math.random() * 12 - 6) * scale,
       size: (3 + Math.random() * 10) * scale,
@@ -542,8 +479,7 @@ function spawnConfetti(x, y, count) {
   const palette = ["#ffe066", "#8dffb2", "#7fd6ff", "#ff9f43", "#ff4d4d"];
   for (let i = 0; i < count; i++) {
     confetti.push({
-      x,
-      y,
+      x, y,
       vx: Math.random() * 8 - 4,
       vy: Math.random() * -5 - 1,
       w: 6 + Math.random() * 7,
@@ -556,9 +492,7 @@ function spawnConfetti(x, y, count) {
   }
 }
 
-// =========================
-// DRAW
-// =========================
+// draw
 function drawGame() {
   gameCtx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
 
@@ -578,32 +512,36 @@ function drawGame() {
 function drawBackground() {
   const sky = gameCtx.createLinearGradient(0, 0, 0, gameCanvas.height);
   sky.addColorStop(0, "#99e0ff");
-  sky.addColorStop(0.32, "#ebf9ff");
-  sky.addColorStop(0.33, "#314b6b");
-  sky.addColorStop(0.53, "#21364d");
-  sky.addColorStop(0.54, "#4db45e");
+  sky.addColorStop(0.42, "#ebf9ff");
+  sky.addColorStop(0.43, "#69b86d");
   sky.addColorStop(1, "#265f37");
   gameCtx.fillStyle = sky;
   gameCtx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
 
-  gameCtx.fillStyle = "#253b53";
-  gameCtx.fillRect(0, 220, gameCanvas.width, 95);
+  // softer skyline instead of dark glitter strip
+  gameCtx.fillStyle = "rgba(41,68,96,0.55)";
+  for (let i = 0; i < 20; i++) {
+    const x = 40 + i * 70;
+    const h = 20 + (i % 4) * 18;
+    gameCtx.fillRect(x, 300 - h, 34, h);
+  }
 
-  for (let i = 0; i < 220; i++) {
-    gameCtx.fillStyle = `rgba(255,255,255,${0.10 + Math.random() * 0.35})`;
+  // distant crowd/lights, subtle
+  for (let i = 0; i < 120; i++) {
+    gameCtx.fillStyle = `rgba(255,255,255,${0.05 + Math.random() * 0.12})`;
     gameCtx.beginPath();
-    gameCtx.arc(12 + i * 7, 235 + Math.random() * 62, 1.5 + Math.random() * 1.7, 0, Math.PI * 2);
+    gameCtx.arc(20 + i * 11, 318 + Math.random() * 24, 1.2 + Math.random(), 0, Math.PI * 2);
     gameCtx.fill();
   }
 
   for (let i = 0; i < 10; i++) {
-    gameCtx.fillStyle = "rgba(255,248,190,0.95)";
+    gameCtx.fillStyle = "rgba(255,248,190,0.85)";
     gameCtx.beginPath();
-    gameCtx.arc(80 + i * 135, 60, 12, 0, Math.PI * 2);
+    gameCtx.arc(80 + i * 135, 72, 10, 0, Math.PI * 2);
     gameCtx.fill();
   }
 
-  gameCtx.strokeStyle = "rgba(255,255,255,0.28)";
+  gameCtx.strokeStyle = "rgba(255,255,255,0.24)";
   gameCtx.lineWidth = 5;
   gameCtx.beginPath();
   gameCtx.moveTo(0, 455);
@@ -611,7 +549,7 @@ function drawBackground() {
   gameCtx.stroke();
 
   for (let i = 0; i < 10; i++) {
-    gameCtx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.04)";
+    gameCtx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.03)";
     gameCtx.fillRect(0, 470 + i * 28, gameCanvas.width, 28);
   }
 
@@ -629,14 +567,12 @@ function drawBackground() {
 }
 
 function drawCatcherMitt() {
-  // glow
   const glow = gameCtx.createRadialGradient(mitt.x, mitt.y, 10, mitt.x, mitt.y, 100);
   glow.addColorStop(0, `rgba(255,214,90,${0.18 + mitt.glow * 0.18})`);
   glow.addColorStop(1, "rgba(255,214,90,0)");
   gameCtx.fillStyle = glow;
   gameCtx.fillRect(mitt.x - 110, mitt.y - 110, 220, 220);
 
-  // mitt shape
   gameCtx.fillStyle = "#b46d2f";
   gameCtx.beginPath();
   gameCtx.ellipse(mitt.x, mitt.y, 55, 70, 0, 0, Math.PI * 2);
@@ -670,7 +606,7 @@ function drawStrikeZone() {
   gameCtx.fillStyle = glow;
   gameCtx.fillRect(strikeZone.x - 60, strikeZone.y - 60, strikeZone.w + 120, strikeZone.h + 120);
 
-  gameCtx.fillStyle = "rgba(0,0,0,0.20)";
+  gameCtx.fillStyle = "rgba(0,0,0,0.18)";
   gameCtx.fillRect(strikeZone.x - 18, strikeZone.y - 18, strikeZone.w + 36, strikeZone.h + 36);
 
   gameCtx.strokeStyle = "white";
@@ -871,9 +807,7 @@ function drawEndScreen() {
   gameCtx.fillText("Press Reset Game to play again", 555, 425);
 }
 
-// =========================
-// SILHOUETTE DRAWING
-// =========================
+// silhouette
 function drawSilhouette(keypoints) {
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
 
@@ -919,15 +853,9 @@ function drawBone(keypoints, aName, bName) {
   overlayCtx.stroke();
 }
 
-// =========================
-// HELPERS
-// =========================
+// helpers
 function findKeypoint(keypoints, name) {
   return keypoints.find((k) => k.name === name);
-}
-
-function dist(x1, y1, x2, y2) {
-  return Math.hypot(x2 - x1, y2 - y1);
 }
 
 function hexToRgba(hex, alpha) {

@@ -30,3 +30,10 @@ body {
 #overlay {
   pointer-events: none;
 }
+
+#gameCanvas {
+  display: block;
+  margin: 20px auto;
+  border: 3px solid white;
+  background: linear-gradient(#87ceeb 50%, #3cb371 50%);
+}

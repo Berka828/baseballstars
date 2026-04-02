@@ -56,26 +56,42 @@ const BX = {
   white: "#ffffff"
 };
 
-(function improveStatusUI() {
-  const posePanel = document.querySelector(".posePanel");
-  if (posePanel && statusText) {
-    posePanel.appendChild(statusText);
-    statusText.style.display = "block";
-    statusText.style.marginTop = "14px";
-    statusText.style.padding = "16px 18px";
-    statusText.style.fontSize = "22px";
-    statusText.style.lineHeight = "1.25";
-    statusText.style.fontWeight = "800";
-    statusText.style.textAlign = "center";
-    statusText.style.borderRadius = "18px";
-    statusText.style.background = "rgba(7,18,31,0.94)";
-    statusText.style.border = "2px solid rgba(108,199,255,0.26)";
-    statusText.style.color = "#ffffff";
-  }
-})();
-
 function setStatus(msg) {
-  statusText.textContent = msg;
+  if (statusText) statusText.textContent = msg;
+}
+
+/* =========================
+   FORCE OVERLAY VISIBILITY
+========================= */
+function forceOverlayVisibility() {
+  const wrap = document.querySelector(".videoWrap");
+  if (wrap) {
+    wrap.style.position = "relative";
+    wrap.style.isolation = "isolate";
+  }
+
+  video.style.position = "absolute";
+  video.style.inset = "0";
+  video.style.width = "100%";
+  video.style.height = "100%";
+  video.style.zIndex = "1";
+  video.style.objectFit = "cover";
+
+  overlay.style.position = "absolute";
+  overlay.style.inset = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.zIndex = "9999";
+  overlay.style.pointerEvents = "none";
+  overlay.style.display = "block";
+  overlay.style.opacity = "1";
+  overlay.style.background = "transparent";
+
+  const tint = document.querySelector(".videoTint");
+  if (tint) {
+    tint.style.zIndex = "2";
+    tint.style.pointerEvents = "none";
+  }
 }
 
 /* =========================
@@ -121,98 +137,105 @@ function playGreat() {
 function playReset() { playTone(520, 0.06, "triangle", 0.03); }
 
 /* =========================
+   CAMERA START
+========================= */
+async function startCamera() {
+  forceOverlayVisibility();
+  ensureAudio();
+  setStatus("Starting camera...");
+
+  if (video.srcObject) {
+    const oldStream = video.srcObject;
+    oldStream.getTracks().forEach(track => track.stop());
+    video.srcObject = null;
+  }
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const videoDevices = devices.filter(d => d.kind === "videoinput");
+  console.log("Video devices:", videoDevices);
+
+  const preferredDevice =
+    videoDevices.find(d => /obs virtual camera/i.test(d.label)) ||
+    videoDevices.find(d => /azure|kinect/i.test(d.label)) ||
+    videoDevices.find(d => /camera|webcam|usb/i.test(d.label)) ||
+    videoDevices[0];
+
+  if (!preferredDevice) {
+    throw new Error("No video input device found.");
+  }
+
+  console.log("Using device:", preferredDevice);
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      deviceId: preferredDevice.deviceId ? { exact: preferredDevice.deviceId } : undefined,
+      width: { ideal: 640 },
+      height: { ideal: 480 },
+      frameRate: { ideal: 30 }
+    },
+    audio: false
+  });
+
+  video.srcObject = stream;
+
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("Camera timeout")), 12000);
+
+    video.onloadedmetadata = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+
+    video.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error("Video failed to load"));
+    };
+  });
+
+  await video.play();
+
+  overlay.width = video.videoWidth || 640;
+  overlay.height = video.videoHeight || 480;
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+
+  console.log("Video started:", {
+    width: video.videoWidth,
+    height: video.videoHeight
+  });
+
+  setStatus("Loading pose detector...");
+
+  if (!detector) {
+    await tf.setBackend("webgl");
+    await tf.ready();
+
+    detector = await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      {
+        modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+      }
+    );
+  }
+
+  cameraStarted = true;
+  setStatus("STEP 1: Put your throwing hand in the blue box.");
+
+  if (!started) {
+    started = true;
+    requestAnimationFrame(loop);
+  }
+}
+
+/* =========================
    BUTTONS
 ========================= */
 startBtn.onclick = async () => {
   try {
-    ensureAudio();
-    setStatus("Starting camera...");
-
-    if (video.srcObject) {
-      const oldStream = video.srcObject;
-      oldStream.getTracks().forEach(track => track.stop());
-      video.srcObject = null;
-    }
-
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const videoDevices = devices.filter(d => d.kind === "videoinput");
-    console.log("Video devices:", videoDevices);
-
-    const preferredDevice =
-      videoDevices.find(d => /obs virtual camera/i.test(d.label)) ||
-      videoDevices.find(d => /azure|kinect/i.test(d.label)) ||
-      videoDevices.find(d => /camera|webcam|usb/i.test(d.label)) ||
-      videoDevices[0];
-
-    if (!preferredDevice) {
-      throw new Error("No video input device found.");
-    }
-
-    console.log("Using device:", preferredDevice);
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        deviceId: preferredDevice.deviceId ? { exact: preferredDevice.deviceId } : undefined,
-        width: { ideal: 640 },
-        height: { ideal: 480 },
-        frameRate: { ideal: 30 }
-      },
-      audio: false
-    });
-
-    video.srcObject = stream;
-
-    await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("Camera timeout")), 12000);
-
-      video.onloadedmetadata = () => {
-        clearTimeout(timeout);
-        resolve();
-      };
-
-      video.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error("Video failed to load"));
-      };
-    });
-
-    await video.play();
-
-    overlay.width = video.videoWidth || 640;
-    overlay.height = video.videoHeight || 480;
-    overlay.style.width = "100%";
-    overlay.style.height = "100%";
-
-    console.log("Video started:", {
-      width: video.videoWidth,
-      height: video.videoHeight
-    });
-
-    setStatus("Loading pose detector...");
-
-    if (!detector) {
-      await tf.setBackend("webgl");
-      await tf.ready();
-
-      detector = await poseDetection.createDetector(
-        poseDetection.SupportedModels.MoveNet,
-        {
-          modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
-        }
-      );
-    }
-
-    cameraStarted = true;
-    setStatus("STEP 1: Put your throwing hand in the blue box.");
-
-    if (!started) {
-      started = true;
-      requestAnimationFrame(loop);
-    }
-
+    await startCamera();
   } catch (err) {
     console.error("Camera start error:", err);
-    setStatus("Camera failed. Make sure OBS Virtual Camera is running.");
+    setStatus("Camera failed: " + err.message);
     alert("Camera failed: " + err.message);
   }
 };
@@ -311,8 +334,6 @@ async function loop() {
     };
 
     drawSilhouette(keypoints);
-
-    console.log("Pose loop:", { loadBox, wristScreen, phase });
 
     if (throwCooldown || resultPauseTimer > 0) return;
 
@@ -903,7 +924,7 @@ function drawSilhouette(keypoints) {
 
 function drawBone(keypoints, aName, bName) {
   const a = findKeypoint(keypoints, aName);
-  const b = findKeypoint(keypoints, bName);
+  const b = findKeypoint(keypoints, aName === bName ? aName : bName);
   if (!a || !b || a.score < 0.25 || b.score < 0.25) return;
 
   overlayCtx.beginPath();

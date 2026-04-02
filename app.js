@@ -140,18 +140,40 @@ function playReset() { playTone(520, 0.06, "triangle", 0.03); }
 startBtn.onclick = async () => {
   try {
     ensureAudio();
-    setStatus("Starting camera...");
+    setStatus("Looking for camera...");
 
-    // Stop previous stream only if already running
+    // Clean up previous stream
     if (video.srcObject) {
       const oldStream = video.srcObject;
       oldStream.getTracks().forEach(track => track.stop());
       video.srcObject = null;
     }
 
-    // SINGLE clean camera request
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(d => d.kind === "videoinput");
+
+    console.log("Video devices found:", videoDevices);
+
+    if (!videoDevices.length) {
+      throw new Error("No video input devices found.");
+    }
+
+    // Prefer OBS Virtual Camera first
+    const preferredDevice =
+      videoDevices.find(d => /obs virtual camera/i.test(d.label)) ||
+      videoDevices.find(d => /azure|kinect/i.test(d.label)) ||
+      videoDevices.find(d => /camera|webcam|usb/i.test(d.label)) ||
+      videoDevices[0];
+
+    console.log("Using camera:", preferredDevice);
+
+    setStatus(`Starting: ${preferredDevice.label || "camera"}...`);
+
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
+        deviceId: preferredDevice.deviceId
+          ? { exact: preferredDevice.deviceId }
+          : undefined,
         width: { ideal: 640 },
         height: { ideal: 480 },
         frameRate: { ideal: 30 }
@@ -164,7 +186,7 @@ startBtn.onclick = async () => {
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error("Camera timeout"));
-      }, 10000);
+      }, 12000);
 
       video.onloadedmetadata = () => {
         clearTimeout(timeout);
@@ -182,6 +204,12 @@ startBtn.onclick = async () => {
     overlay.width = video.videoWidth || 640;
     overlay.height = video.videoHeight || 480;
 
+    console.log("Camera started:", {
+      label: preferredDevice.label,
+      width: video.videoWidth,
+      height: video.videoHeight
+    });
+
     setStatus("Loading pose detector...");
 
     if (!detector) {
@@ -191,24 +219,21 @@ startBtn.onclick = async () => {
       detector = await poseDetection.createDetector(
         poseDetection.SupportedModels.MoveNet,
         {
-          modelType:
-            poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+          modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
         }
       );
     }
 
     cameraStarted = true;
-
     setStatus("STEP 1: Put your throwing hand in the blue box.");
 
     if (!started) {
       started = true;
       requestAnimationFrame(loop);
     }
-
   } catch (err) {
-    console.error("Camera error:", err);
-    setStatus("Camera failed. Check OBS Virtual Camera.");
+    console.error("Camera start error:", err);
+    setStatus("Camera failed. Make sure OBS Virtual Camera is running.");
     alert("Camera failed: " + err.message);
   }
 };

@@ -11,32 +11,18 @@ let detector = null;
 let started = false;
 let cameraStarted = false;
 
-let trailDots = [];
-let rings = [];
-let flashes = [];
-let confetti = [];
+let wristScreen = null;
+let loadBox = null;
 
 let wristHistory = [];
-let throwCooldown = false;
-let resultPauseTimer = 0;
-let readyPoseArmed = false;
 let readyPoseFrames = 0;
 let readyLockout = false;
+let throwCooldown = false;
+let resultPauseTimer = 0;
 
-let loadBox = null;
-let wristScreen = null;
-let releasePoint = null;
-let finishPoint = null;
-
-let sessionCount = 0;
-let totalFormScore = 0;
-
-let currentPower = 0;
+let phase = "LOAD"; // LOAD / THROW / FOLLOW / RESET
 let feedbackText = "READY";
 let feedbackTimer = 0;
-
-let phase = "LOAD"; // LOAD, RELEASE, FINISH, RESET
-let coachingText = "Move your throwing hand into the blue box.";
 
 let formScores = {
   load: 0,
@@ -46,16 +32,20 @@ let formScores = {
 };
 
 let lastResult = {
-  load: 0,
-  release: 0,
-  follow: 0,
   total: 0,
-  note: ""
+  note: "Complete a throw to get coaching feedback."
 };
 
-const FORWARD_DIRECTION = 1;
+let sessionCount = 0;
+let avgScore = 0;
+let currentPower = 0;
 
-const miniMap = { x: 42, y: 620, w: 280, h: 108 };
+let rings = [];
+let trailDots = [];
+let flashes = [];
+let confetti = [];
+
+const FORWARD_DIRECTION = 1;
 
 const BX = {
   yellow: "#f1c94c",
@@ -63,11 +53,6 @@ const BX = {
   blue: "#6cc7ff",
   pink: "#d87adf",
   green: "#8ed857",
-  navy: "#0d2035",
-  navy2: "#132c45",
-  steel: "#25384d",
-  turf: "#2e6d38",
-  turf2: "#3d8444",
   white: "#ffffff"
 };
 
@@ -86,7 +71,6 @@ const BX = {
     statusText.style.background = "rgba(7,18,31,0.94)";
     statusText.style.border = "2px solid rgba(108,199,255,0.26)";
     statusText.style.color = "#ffffff";
-    statusText.style.boxShadow = "0 8px 24px rgba(0,0,0,0.28)";
   }
 })();
 
@@ -94,13 +78,13 @@ function setStatus(msg) {
   statusText.textContent = msg;
 }
 
-/* AUDIO */
+/* =========================
+   AUDIO
+========================= */
 let audioCtx = null;
 
 function ensureAudio() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === "suspended") audioCtx.resume();
 }
 
@@ -136,13 +120,14 @@ function playGreat() {
 }
 function playReset() { playTone(520, 0.06, "triangle", 0.03); }
 
-/* BUTTONS */
+/* =========================
+   BUTTONS
+========================= */
 startBtn.onclick = async () => {
   try {
     ensureAudio();
-    setStatus("Looking for camera...");
+    setStatus("Starting camera...");
 
-    // Clean up previous stream
     if (video.srcObject) {
       const oldStream = video.srcObject;
       oldStream.getTracks().forEach(track => track.stop());
@@ -151,29 +136,23 @@ startBtn.onclick = async () => {
 
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videoDevices = devices.filter(d => d.kind === "videoinput");
+    console.log("Video devices:", videoDevices);
 
-    console.log("Video devices found:", videoDevices);
-
-    if (!videoDevices.length) {
-      throw new Error("No video input devices found.");
-    }
-
-    // Prefer OBS Virtual Camera first
     const preferredDevice =
       videoDevices.find(d => /obs virtual camera/i.test(d.label)) ||
       videoDevices.find(d => /azure|kinect/i.test(d.label)) ||
       videoDevices.find(d => /camera|webcam|usb/i.test(d.label)) ||
       videoDevices[0];
 
-    console.log("Using camera:", preferredDevice);
+    if (!preferredDevice) {
+      throw new Error("No video input device found.");
+    }
 
-    setStatus(`Starting: ${preferredDevice.label || "camera"}...`);
+    console.log("Using device:", preferredDevice);
 
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        deviceId: preferredDevice.deviceId
-          ? { exact: preferredDevice.deviceId }
-          : undefined,
+        deviceId: preferredDevice.deviceId ? { exact: preferredDevice.deviceId } : undefined,
         width: { ideal: 640 },
         height: { ideal: 480 },
         frameRate: { ideal: 30 }
@@ -184,9 +163,7 @@ startBtn.onclick = async () => {
     video.srcObject = stream;
 
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error("Camera timeout"));
-      }, 12000);
+      const timeout = setTimeout(() => reject(new Error("Camera timeout")), 12000);
 
       video.onloadedmetadata = () => {
         clearTimeout(timeout);
@@ -203,9 +180,10 @@ startBtn.onclick = async () => {
 
     overlay.width = video.videoWidth || 640;
     overlay.height = video.videoHeight || 480;
+    overlay.style.width = "100%";
+    overlay.style.height = "100%";
 
-    console.log("Camera started:", {
-      label: preferredDevice.label,
+    console.log("Video started:", {
       width: video.videoWidth,
       height: video.videoHeight
     });
@@ -231,6 +209,7 @@ startBtn.onclick = async () => {
       started = true;
       requestAnimationFrame(loop);
     }
+
   } catch (err) {
     console.error("Camera start error:", err);
     setStatus("Camera failed. Make sure OBS Virtual Camera is running.");
@@ -238,43 +217,39 @@ startBtn.onclick = async () => {
   }
 };
 
-resetBtn.onclick = () => {
-  resetSession();
-};
+resetBtn.onclick = resetSession;
 
 function resetSession() {
-  trailDots = [];
+  wristHistory = [];
+  readyPoseFrames = 0;
+  readyLockout = false;
+  throwCooldown = false;
+  resultPauseTimer = 0;
+
+  phase = "LOAD";
+  feedbackText = "READY";
+  feedbackTimer = 0;
+  currentPower = 0;
+
+  formScores = { load: 0, release: 0, follow: 0, total: 0 };
+  lastResult = {
+    total: 0,
+    note: "Complete a throw to get coaching feedback."
+  };
+
   rings = [];
+  trailDots = [];
   flashes = [];
   confetti = [];
 
-  wristHistory = [];
-  throwCooldown = false;
-  resultPauseTimer = 0;
-  readyPoseArmed = false;
-  readyPoseFrames = 0;
-  readyLockout = false;
-
-  loadBox = null;
-  wristScreen = null;
-  releasePoint = null;
-  finishPoint = null;
-
-  currentPower = 0;
-  feedbackText = "READY";
-  feedbackTimer = 0;
-
-  phase = "LOAD";
-  coachingText = "STEP 1: Load your arm in the blue box.";
-  setStatus(coachingText);
-
-  formScores = { load: 0, release: 0, follow: 0, total: 0 };
-
   playReset();
+  setStatus("STEP 1: Put your throwing hand in the blue box.");
   drawGame();
 }
 
-/* LOOP */
+/* =========================
+   LOOP
+========================= */
 async function loop() {
   requestAnimationFrame(loop);
 
@@ -283,12 +258,16 @@ async function loop() {
 
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
 
-  if (!detector || video.readyState < 2) return;
+  if (!detector || video.readyState < 2) {
+    drawFallbackOverlay();
+    return;
+  }
 
   try {
     const poses = await detector.estimatePoses(video);
 
     if (!poses || poses.length === 0 || !poses[0].keypoints) {
+      drawFallbackOverlay();
       setStatus("No body detected. Step back so your upper body is visible.");
       return;
     }
@@ -307,6 +286,7 @@ async function loop() {
       rightHip.score < 0.25 ||
       leftShoulder.score < 0.25
     ) {
+      drawFallbackOverlay();
       setStatus("Upper body not clear. Face camera and step back.");
       return;
     }
@@ -332,16 +312,16 @@ async function loop() {
 
     drawSilhouette(keypoints);
 
-    if (throwCooldown || resultPauseTimer > 0) {
-      return;
-    }
+    console.log("Pose loop:", { loadBox, wristScreen, phase });
+
+    if (throwCooldown || resultPauseTimer > 0) return;
 
     wristHistory.push({
       x: wristScreen.x,
       y: wristScreen.y,
       t: performance.now()
     });
-    if (wristHistory.length > 18) wristHistory.shift();
+    if (wristHistory.length > 16) wristHistory.shift();
 
     const wristInLoadBox = pointInRect(wristScreen.x, wristScreen.y, loadBox);
 
@@ -349,34 +329,27 @@ async function loop() {
       if (!readyLockout) {
         if (wristInLoadBox) {
           readyPoseFrames++;
-          coachingText = "STEP 1: Great. Hold your load.";
-          setStatus(coachingText);
+          setStatus("STEP 1: Hold your load.");
         } else {
           readyPoseFrames = 0;
-          coachingText = "STEP 1: Move your throwing hand into the blue box.";
-          setStatus(coachingText);
+          setStatus("STEP 1: Put your throwing hand in the blue box.");
         }
 
-        if (readyPoseFrames >= 7) {
-          readyPoseArmed = true;
-          phase = "RELEASE";
+        if (readyPoseFrames >= 4) {
+          phase = "THROW";
           formScores.load = 100;
           feedbackText = "GREAT LOAD";
-          feedbackTimer = 45;
+          feedbackTimer = 50;
           playLoad();
-          spawnCoachBurst(loadBox.x + loadBox.w / 2, loadBox.y + loadBox.h / 2, BX.blue);
-          coachingText = "STEP 2: Throw forward.";
-          setStatus(coachingText);
+          spawnBurst(loadBox.x + loadBox.w / 2, loadBox.y + loadBox.h / 2, BX.blue, 50);
+          setStatus("STEP 2: Throw forward.");
+          wristHistory = [];
         }
-      } else {
-        coachingText = "Move your hand out, then reload in the blue box.";
-        setStatus(coachingText);
-        if (!wristInLoadBox) readyLockout = false;
       }
       return;
     }
 
-    if (phase === "RELEASE" && wristHistory.length >= 6) {
+    if (phase === "THROW" && wristHistory.length >= 5) {
       const first = wristHistory[0];
       const last = wristHistory[wristHistory.length - 1];
 
@@ -385,26 +358,16 @@ async function loop() {
 
       const forwardX = Math.max(0, rawForwardX);
       const power = forwardX + Math.max(0, upwardY) * 0.18;
+      currentPower = Math.min(280, power * 2);
 
-      const movedOutOfBox = !pointInRect(wristScreen.x, wristScreen.y, loadBox);
-
-      if (movedOutOfBox && forwardX > 52 && power > 55) {
-        releasePoint = { x: wristScreen.x, y: wristScreen.y };
-        currentPower = Math.min(280, power * 2);
-
-        if (power < 70) lastThrowLabel = "SMOOTH RELEASE";
-        else if (power < 95) lastThrowLabel = "STRONG RELEASE";
-        else lastThrowLabel = "POWER THROW";
-
-        formScores.release = Math.min(100, Math.round(power * 1.2));
-
-        spawnCoachBurst(releasePoint.x, releasePoint.y, BX.orange, power);
+      if (forwardX > 30 && power > 35) {
+        formScores.release = Math.min(100, Math.round(power * 1.5));
+        phase = "FOLLOW";
+        feedbackText = "STRONG RELEASE";
+        feedbackTimer = 50;
         playRelease();
-
-        phase = "FINISH";
-        coachingText = "STEP 3: Finish across your body.";
-        setStatus(coachingText);
-
+        spawnBurst(wristScreen.x, wristScreen.y, BX.orange, power);
+        setStatus("STEP 3: Follow through across your body.");
         wristHistory = [];
       } else {
         setStatus("STEP 2: Throw forward.");
@@ -412,22 +375,21 @@ async function loop() {
       return;
     }
 
-    if (phase === "FINISH" && wristHistory.length >= 4) {
+    if (phase === "FOLLOW" && wristHistory.length >= 4) {
       const first = wristHistory[0];
       const last = wristHistory[wristHistory.length - 1];
-
       const travel = Math.abs(last.x - first.x) + Math.abs(last.y - first.y);
 
-      if (travel > 18) {
-        finishPoint = { x: wristScreen.x, y: wristScreen.y };
-        formScores.follow = Math.min(100, 40 + Math.round(travel * 1.8));
+      if (travel > 14) {
+        formScores.follow = Math.min(100, 45 + Math.round(travel * 2));
         finalizeThrow();
       } else {
-        setStatus("STEP 3: Finish across your body.");
+        setStatus("STEP 3: Follow through across your body.");
       }
     }
   } catch (err) {
-    console.error(err);
+    console.error("Pose error:", err);
+    drawFallbackOverlay();
     setStatus("Pose error: " + err.message);
   }
 }
@@ -440,59 +402,61 @@ function finalizeThrow() {
   );
 
   sessionCount++;
-  totalFormScore += formScores.total;
+  avgScore = Math.round(((avgScore * (sessionCount - 1)) + formScores.total) / sessionCount);
 
   let note = "";
+  let burstColor = BX.blue;
+
   if (formScores.total >= 90) {
     note = "Excellent mechanics!";
     feedbackText = "EXCELLENT FORM";
+    burstColor = BX.yellow;
     playGreat();
-    spawnBigImpact(BX.yellow, currentPower);
   } else if (formScores.total >= 75) {
     note = "Strong throw. Nice mechanics.";
     feedbackText = "STRONG FORM";
+    burstColor = BX.green;
     playGood();
-    spawnBigImpact(BX.green, currentPower);
   } else if (formScores.follow < 55) {
     note = "Good start. Try a bigger follow-through.";
     feedbackText = "FOLLOW THROUGH MORE";
+    burstColor = BX.orange;
     playGood();
-    spawnBigImpact(BX.orange, currentPower * 0.7);
   } else {
     note = "Try loading deeper behind your shoulder.";
     feedbackText = "LOAD DEEPER";
+    burstColor = BX.blue;
     playGood();
-    spawnBigImpact(BX.blue, currentPower * 0.6);
   }
 
-  feedbackTimer = 75;
+  feedbackTimer = 80;
   lastResult = {
-    load: formScores.load,
-    release: formScores.release,
-    follow: formScores.follow,
     total: formScores.total,
     note
   };
 
+  spawnBigImpact(burstColor, currentPower);
+
   phase = "RESET";
-  readyPoseArmed = false;
-  readyPoseFrames = 0;
   readyLockout = true;
   wristHistory = [];
   throwCooldown = true;
-  resultPauseTimer = 110;
+  resultPauseTimer = 100;
 
   setStatus(note);
 
   setTimeout(() => {
     throwCooldown = false;
     phase = "LOAD";
-    coachingText = "STEP 1: Load your arm in the blue box.";
-    setStatus(coachingText);
+    readyPoseFrames = 0;
+    formScores = { ...formScores, load: 0, release: 0, follow: 0 };
+    setStatus("STEP 1: Put your throwing hand in the blue box.");
   }, 1800);
 }
 
-/* UPDATE */
+/* =========================
+   UPDATE
+========================= */
 function updateGame() {
   if (resultPauseTimer > 0) resultPauseTimer--;
 
@@ -530,8 +494,10 @@ function updateGame() {
   if (feedbackTimer > 0) feedbackTimer--;
 }
 
-/* FX */
-function spawnCoachBurst(x, y, color, power = 40) {
+/* =========================
+   FX
+========================= */
+function spawnBurst(x, y, color, power = 40) {
   const ringCount = 2 + Math.floor(power / 28);
 
   for (let i = 0; i < ringCount; i++) {
@@ -545,10 +511,7 @@ function spawnCoachBurst(x, y, color, power = 40) {
     });
   }
 
-  addFlash(color, 0.12);
-
-  const dotCount = 4 + Math.floor(power / 25);
-  for (let i = 0; i < dotCount; i++) {
+  for (let i = 0; i < 5; i++) {
     trailDots.push({
       x,
       y,
@@ -559,6 +522,8 @@ function spawnCoachBurst(x, y, color, power = 40) {
       color
     });
   }
+
+  addFlash(color, 0.12);
 }
 
 function spawnBigImpact(color, power) {
@@ -566,8 +531,8 @@ function spawnBigImpact(color, power) {
 
   for (let i = 0; i < ringCount; i++) {
     rings.push({
-      x: gameCanvas.width * 0.70,
-      y: gameCanvas.height * 0.42,
+      x: gameCanvas.width * 0.68,
+      y: gameCanvas.height * 0.36,
       r: 20 + i * 22,
       grow: 6 + i,
       alpha: 0.75 - i * 0.08,
@@ -576,10 +541,10 @@ function spawnBigImpact(color, power) {
   }
 
   const accent = [BX.blue, BX.orange, BX.yellow, BX.green, BX.pink];
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 18; i++) {
     confetti.push({
-      x: gameCanvas.width * 0.70,
-      y: gameCanvas.height * 0.42,
+      x: gameCanvas.width * 0.68,
+      y: gameCanvas.height * 0.36,
       vx: Math.random() * 10 - 5,
       vy: Math.random() * -7 - 1,
       w: 6 + Math.random() * 8,
@@ -591,27 +556,30 @@ function spawnBigImpact(color, power) {
     });
   }
 
-  addFlash(color, 0.24);
+  addFlash(color, 0.22);
 }
 
 function addFlash(color, alpha = 0.25) {
   flashes.push({ color, alpha });
 }
 
-/* DRAW */
+/* =========================
+   DRAW
+========================= */
 function drawGame() {
   gameCtx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
 
   drawBackground();
-  drawMiniMap();
   drawCoachZones();
   drawHUD();
-  drawScoreBars();
+  drawMiniMap();
+  drawFormPanel();
+  drawFeedbackBanner();
+  drawLastResultPanel();
   drawRings();
   drawTrail();
   drawConfetti();
-  drawFeedbackBanner();
-  drawLastResultPanel();
+  drawCelebrationFlash();
 }
 
 function drawBackground() {
@@ -623,16 +591,13 @@ function drawBackground() {
   gameCtx.fillStyle = bg;
   gameCtx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
 
-  // cage roof / dark bay
   roundedRect(gameCtx, 0, 95, gameCanvas.width, 250, 0, "rgba(8,18,29,0.42)", null);
 
-  // vertical cage posts
   for (let i = 0; i < 8; i++) {
     const x = 120 + i * 160;
     roundedRect(gameCtx, x, 90, 8, 270, 4, "rgba(180,210,230,0.10)", null);
   }
 
-  // netting lines
   gameCtx.strokeStyle = "rgba(220,240,255,0.05)";
   gameCtx.lineWidth = 1;
   for (let i = 0; i < 12; i++) {
@@ -642,7 +607,6 @@ function drawBackground() {
     gameCtx.stroke();
   }
 
-  // BXCM accent wall band
   roundedRect(gameCtx, 0, 315, gameCanvas.width, 78, 0, "rgba(17,35,58,0.65)", null);
 
   const chips = [
@@ -657,7 +621,6 @@ function drawBackground() {
     roundedRect(gameCtx, chip.x, 340, 140, 24, 12, `${chip.c}22`, `${chip.c}55`, 2);
   });
 
-  // turf
   for (let i = 0; i < 10; i++) {
     gameCtx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)";
     gameCtx.fillRect(0, 455 + i * 30, gameCanvas.width, 30);
@@ -670,12 +633,11 @@ function drawBackground() {
 }
 
 function drawCoachZones() {
-  // release lane
   roundedRect(
     gameCtx,
     980,
     190,
-    210,
+    220,
     300,
     28,
     "rgba(255,255,255,0.03)",
@@ -683,46 +645,41 @@ function drawCoachZones() {
     2
   );
 
-  // strike/finish coach zone integrated into bay
   roundedRect(
     gameCtx,
-    strikeZone.x - 28,
-    strikeZone.y - 34,
-    strikeZone.w + 56,
-    strikeZone.h + 68,
+    1088,
+    236,
+    170,
+    206,
     26,
     "rgba(9,20,33,0.44)",
     "rgba(255,255,255,0.08)",
     2
   );
 
-  const glow = gameCtx.createRadialGradient(
-    mitt.x, mitt.y, 10,
-    mitt.x, mitt.y, 120
-  );
+  const glow = gameCtx.createRadialGradient(1188, 340, 10, 1188, 340, 120);
   glow.addColorStop(0, "rgba(241,201,76,0.18)");
   glow.addColorStop(1, "rgba(241,201,76,0)");
   gameCtx.fillStyle = glow;
-  gameCtx.fillRect(mitt.x - 130, mitt.y - 130, 260, 260);
+  gameCtx.fillRect(1050, 210, 270, 270);
 
-  // mitt
   gameCtx.fillStyle = "rgba(177,105,43,0.95)";
   gameCtx.beginPath();
-  gameCtx.ellipse(mitt.x, mitt.y, 52, 68, 0, 0, Math.PI * 2);
+  gameCtx.ellipse(1188, 340, 52, 68, 0, 0, Math.PI * 2);
   gameCtx.fill();
 
   gameCtx.fillStyle = "rgba(223,151,78,0.95)";
   gameCtx.beginPath();
-  gameCtx.ellipse(mitt.x + 2, mitt.y + 2, 34, 46, 0, 0, Math.PI * 2);
+  gameCtx.ellipse(1190, 342, 34, 46, 0, 0, Math.PI * 2);
   gameCtx.fill();
 
-  roundedRect(gameCtx, strikeZone.x, strikeZone.y, strikeZone.w, strikeZone.h, 18, null, "rgba(255,255,255,0.95)", 5);
-  roundedRect(gameCtx, strikeZone.x + 18, strikeZone.y + strikeZone.h / 2 - 20, strikeZone.w - 36, 40, 14, null, BX.yellow, 3);
+  roundedRect(gameCtx, 1120, 248, 126, 182, 18, null, "rgba(255,255,255,0.95)", 5);
+  roundedRect(gameCtx, 1138, 319, 90, 40, 14, null, BX.yellow, 3);
 
-  roundedRect(gameCtx, strikeZone.x - 2, strikeZone.y - 42, 150, 34, 14, "rgba(6,16,28,0.78)", null);
+  roundedRect(gameCtx, 1116, 204, 150, 34, 14, "rgba(6,16,28,0.78)", null);
   gameCtx.fillStyle = BX.white;
   gameCtx.font = "bold 16px Arial";
-  gameCtx.fillText("COACH TARGET", strikeZone.x + 10, strikeZone.y - 19);
+  gameCtx.fillText("FINISH TARGET", 1128, 227);
 }
 
 function drawHUD() {
@@ -733,13 +690,11 @@ function drawHUD() {
   gameCtx.font = "bold 15px Arial";
   gameCtx.fillText("MOTION ENERGY", 38, 22);
 
-  roundedRect(gameCtx, 1040, 28, 260, 90, 22, "rgba(6,16,28,0.76)", "rgba(255,255,255,0.10)", 2);
+  roundedRect(gameCtx, 1040, 28, 250, 90, 22, "rgba(6,16,28,0.76)", "rgba(255,255,255,0.10)", 2);
   gameCtx.fillStyle = BX.white;
   gameCtx.font = "bold 28px Arial";
-  gameCtx.fillText(`Throws: ${sessionCount}`, 1065, 62);
-
-  const avg = sessionCount > 0 ? Math.round(totalFormScore / sessionCount) : 0;
-  gameCtx.fillText(`Avg Form: ${avg}`, 1065, 97);
+  gameCtx.fillText(`Throws: ${sessionCount}`, 1064, 62);
+  gameCtx.fillText(`Avg: ${avgScore}`, 1064, 96);
 
   roundedRect(gameCtx, 430, 26, 500, 86, 24, "rgba(6,16,28,0.60)", "rgba(255,255,255,0.06)", 1);
 
@@ -748,32 +703,52 @@ function drawHUD() {
   gameCtx.font = "bold 24px Arial";
   gameCtx.fillText("BXCM THROW LAB", gameCanvas.width / 2, 58);
 
-  gameCtx.font = "bold 40px Arial";
+  gameCtx.font = "bold 38px Arial";
   if (phase === "LOAD") gameCtx.fillStyle = BX.blue;
-  else if (phase === "RELEASE") gameCtx.fillStyle = BX.orange;
-  else if (phase === "FINISH") gameCtx.fillStyle = BX.green;
+  else if (phase === "THROW") gameCtx.fillStyle = BX.orange;
+  else if (phase === "FOLLOW") gameCtx.fillStyle = BX.green;
   else gameCtx.fillStyle = BX.yellow;
 
-  gameCtx.fillText(phase, gameCanvas.width / 2, 96);
+  gameCtx.fillText(phase, gameCanvas.width / 2, 94);
   gameCtx.textAlign = "start";
 }
 
-function drawScoreBars() {
-  const panelX = 58;
-  const panelY = 670;
-  const panelW = 520;
-  const rowH = 24;
+function drawMiniMap() {
+  roundedRect(gameCtx, 42, 620, 280, 108, 18, "rgba(6,16,28,0.62)", "rgba(255,255,255,0.10)", 2);
 
-  roundedRect(gameCtx, panelX, panelY, panelW, 110, 20, "rgba(6,16,28,0.72)", "rgba(255,255,255,0.10)", 2);
+  gameCtx.fillStyle = BX.blue;
+  gameCtx.font = "bold 14px Arial";
+  gameCtx.fillText("MOTION MAP", 56, 641);
+
+  gameCtx.strokeStyle = "rgba(255,255,255,0.18)";
+  gameCtx.beginPath();
+  gameCtx.moveTo(74, 688);
+  gameCtx.lineTo(278, 688);
+  gameCtx.stroke();
+
+  gameCtx.fillStyle = "#bd8149";
+  gameCtx.beginPath();
+  gameCtx.arc(74, 688, 8, 0, Math.PI * 2);
+  gameCtx.fill();
+
+  roundedRect(gameCtx, 270, 665, 24, 46, 8, null, BX.white, 2);
+}
+
+function drawFormPanel() {
+  const panelX = 360;
+  const panelY = 650;
+  const panelW = 400;
+
+  roundedRect(gameCtx, panelX, panelY, panelW, 120, 22, "rgba(6,16,28,0.72)", "rgba(255,255,255,0.10)", 2);
 
   gameCtx.fillStyle = BX.white;
   gameCtx.font = "bold 18px Arial";
-  gameCtx.fillText("FORM BREAKDOWN", panelX + 18, panelY + 26);
+  gameCtx.fillText("FORM SCORE", panelX + 18, panelY + 24);
 
-  drawBar(panelX + 18, panelY + 42, 150, rowH, "LOAD", formScores.load, BX.blue);
-  drawBar(panelX + 18, panelY + 72, 150, rowH, "RELEASE", formScores.release, BX.orange);
-  drawBar(panelX + 260, panelY + 42, 150, rowH, "FOLLOW", formScores.follow, BX.green);
-  drawBar(panelX + 260, panelY + 72, 150, rowH, "TOTAL", formScores.total, BX.yellow);
+  drawBar(panelX + 18, panelY + 42, 140, 20, "LOAD", formScores.load, BX.blue);
+  drawBar(panelX + 18, panelY + 74, 140, 20, "RELEASE", formScores.release, BX.orange);
+  drawBar(panelX + 210, panelY + 42, 140, 20, "FOLLOW", formScores.follow, BX.green);
+  drawBar(panelX + 210, panelY + 74, 140, 20, "TOTAL", formScores.total, BX.yellow);
 }
 
 function drawBar(x, y, w, h, label, value, color) {
@@ -786,35 +761,7 @@ function drawBar(x, y, w, h, label, value, color) {
 
   gameCtx.fillStyle = BX.white;
   gameCtx.font = "bold 13px Arial";
-  gameCtx.fillText(String(Math.round(value)), x + w + 10, y + 17);
-}
-
-function drawMiniMap() {
-  roundedRect(gameCtx, miniMap.x, miniMap.y, miniMap.w, miniMap.h, 18, "rgba(6,16,28,0.62)", "rgba(255,255,255,0.10)", 2);
-
-  gameCtx.fillStyle = BX.blue;
-  gameCtx.font = "bold 14px Arial";
-  gameCtx.fillText("MOTION MAP", miniMap.x + 14, miniMap.y + 21);
-
-  gameCtx.strokeStyle = "rgba(255,255,255,0.18)";
-  gameCtx.beginPath();
-  gameCtx.moveTo(miniMap.x + 32, miniMap.y + 68);
-  gameCtx.lineTo(miniMap.x + 236, miniMap.y + 68);
-  gameCtx.stroke();
-
-  gameCtx.fillStyle = "#bd8149";
-  gameCtx.beginPath();
-  gameCtx.arc(miniMap.x + 32, miniMap.y + 68, 8, 0, Math.PI * 2);
-  gameCtx.fill();
-
-  roundedRect(gameCtx, miniMap.x + 228, miniMap.y + 45, 24, 46, 8, null, BX.white, 2);
-
-  if (releasePoint) {
-    gameCtx.fillStyle = BX.orange;
-    gameCtx.beginPath();
-    gameCtx.arc(miniMap.x + 120, miniMap.y + 68, 6, 0, Math.PI * 2);
-    gameCtx.fill();
-  }
+  gameCtx.fillText(String(Math.round(value)), x + w + 8, y + 15);
 }
 
 function drawFeedbackBanner() {
@@ -830,28 +777,19 @@ function drawFeedbackBanner() {
 }
 
 function drawLastResultPanel() {
-  roundedRect(gameCtx, 1000, 540, 300, 210, 22, "rgba(6,16,28,0.76)", "rgba(255,255,255,0.10)", 2);
+  roundedRect(gameCtx, 970, 560, 320, 160, 22, "rgba(6,16,28,0.76)", "rgba(255,255,255,0.10)", 2);
 
   gameCtx.fillStyle = BX.white;
   gameCtx.font = "bold 22px Arial";
-  gameCtx.fillText("LAST THROW", 1022, 572);
-
-  gameCtx.font = "bold 18px Arial";
-  gameCtx.fillStyle = BX.blue;
-  gameCtx.fillText(`Load: ${lastResult.load || 0}`, 1022, 610);
-
-  gameCtx.fillStyle = BX.orange;
-  gameCtx.fillText(`Release: ${lastResult.release || 0}`, 1022, 640);
-
-  gameCtx.fillStyle = BX.green;
-  gameCtx.fillText(`Follow: ${lastResult.follow || 0}`, 1022, 670);
+  gameCtx.fillText("COACH NOTE", 992, 592);
 
   gameCtx.fillStyle = BX.yellow;
-  gameCtx.fillText(`Total: ${lastResult.total || 0}`, 1022, 702);
+  gameCtx.font = "bold 18px Arial";
+  gameCtx.fillText(`Last Score: ${lastResult.total || 0}`, 992, 624);
 
   gameCtx.fillStyle = BX.white;
   gameCtx.font = "bold 16px Arial";
-  wrapText(lastResult.note || "Complete a throw to get coaching feedback.", 1022, 732, 250, 22);
+  wrapText(lastResult.note || "Complete a throw to get coaching feedback.", 992, 655, 270, 22);
 }
 
 function drawRings() {
@@ -892,23 +830,48 @@ function drawCelebrationFlash() {
   });
 }
 
-/* SILHOUETTE */
+/* =========================
+   OVERLAY
+========================= */
+function drawFallbackOverlay() {
+  overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+  overlayCtx.fillStyle = "rgba(0,140,255,0.22)";
+  overlayCtx.strokeStyle = "rgba(0,220,255,1)";
+  overlayCtx.lineWidth = 5;
+
+  overlayCtx.fillRect(40, 80, 120, 140);
+  overlayCtx.strokeRect(40, 80, 120, 140);
+
+  overlayCtx.fillStyle = "rgba(255,255,255,0.95)";
+  overlayCtx.font = "bold 20px Arial";
+  overlayCtx.fillText("TEST BOX", 40, 68);
+}
+
 function drawSilhouette(keypoints) {
   overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
 
+  overlayCtx.fillStyle = "rgba(0,140,255,0.22)";
+  overlayCtx.strokeStyle = "rgba(0,220,255,1)";
+  overlayCtx.lineWidth = 5;
+
   if (loadBox) {
-    overlayCtx.fillStyle = phase === "LOAD"
-      ? "rgba(70,170,255,0.18)"
-      : "rgba(0,255,140,0.18)";
-    overlayCtx.strokeStyle = phase === "LOAD"
-      ? "rgba(70,170,255,0.95)"
-      : "rgba(0,255,140,0.95)";
-    overlayCtx.lineWidth = 3;
     overlayCtx.fillRect(loadBox.x, loadBox.y, loadBox.w, loadBox.h);
     overlayCtx.strokeRect(loadBox.x, loadBox.y, loadBox.w, loadBox.h);
+
+    overlayCtx.fillStyle = "rgba(255,255,255,0.95)";
+    overlayCtx.font = "bold 20px Arial";
+    overlayCtx.fillText("LOAD BOX", loadBox.x, Math.max(24, loadBox.y - 10));
+  } else {
+    overlayCtx.fillRect(40, 80, 120, 140);
+    overlayCtx.strokeRect(40, 80, 120, 140);
+
+    overlayCtx.fillStyle = "rgba(255,255,255,0.95)";
+    overlayCtx.font = "bold 20px Arial";
+    overlayCtx.fillText("TEST BOX", 40, 68);
   }
 
-  overlayCtx.strokeStyle = "rgba(111,214,255,0.95)";
+  overlayCtx.strokeStyle = "rgba(111,214,255,0.98)";
   overlayCtx.lineWidth = 6;
   overlayCtx.lineCap = "round";
 
@@ -923,17 +886,17 @@ function drawSilhouette(keypoints) {
 
   keypoints.forEach((k) => {
     if (k.score > 0.25) {
-      overlayCtx.fillStyle = "rgba(255,230,120,0.92)";
+      overlayCtx.fillStyle = "rgba(255,230,120,0.95)";
       overlayCtx.beginPath();
-      overlayCtx.arc(k.x, k.y, 5, 0, Math.PI * 2);
+      overlayCtx.arc(k.x, k.y, 6, 0, Math.PI * 2);
       overlayCtx.fill();
     }
   });
 
   if (wristScreen) {
-    overlayCtx.fillStyle = "rgba(255,255,255,0.95)";
+    overlayCtx.fillStyle = "rgba(255,255,255,1)";
     overlayCtx.beginPath();
-    overlayCtx.arc(wristScreen.x, wristScreen.y, 11, 0, Math.PI * 2);
+    overlayCtx.arc(wristScreen.x, wristScreen.y, 12, 0, Math.PI * 2);
     overlayCtx.fill();
   }
 }
@@ -949,7 +912,9 @@ function drawBone(keypoints, aName, bName) {
   overlayCtx.stroke();
 }
 
-/* HELPERS */
+/* =========================
+   HELPERS
+========================= */
 function roundedRect(ctx, x, y, w, h, r, fill, stroke, lineWidth = 1) {
   ctx.beginPath();
   ctx.moveTo(x + r, y);

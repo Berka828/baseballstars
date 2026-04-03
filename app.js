@@ -67,10 +67,12 @@ let releasePoint = null;
 let targetHitLevel = "none"; // perfect / good / near / miss
 let targetDistance = 9999;
 
-const FORWARD_DIRECTION = 1; // change to -1 if your setup feels reversed
-const releaseThreshold = 70; // less trigger-happy
-const HOLD_FRAMES_REQUIRED = 8; // easier for kids
-const FOLLOW_TRAVEL_REQUIRED = 10;
+const FORWARD_DIRECTION = 1; // change to -1 if your camera setup feels reversed
+
+// More forgiving for kids
+const releaseThreshold = 38;
+const HOLD_FRAMES_REQUIRED = 6;
+const FOLLOW_TRAVEL_REQUIRED = 6;
 
 const BX = {
   yellow: "#f1c94c",
@@ -203,28 +205,73 @@ function playTone(freq = 440, duration = 0.08, type = "sine", volume = 0.04, sli
   osc.stop(now + duration);
 }
 
-function playLoad() { playTone(520, 0.08, "triangle", 0.03); }
-function playRelease() { playTone(360, 0.14, "sawtooth", 0.04, 110); }
+function playNoiseBurst(duration = 0.08, volume = 0.03, highpass = 1000) {
+  ensureAudio();
+  const now = audioCtx.currentTime;
+  const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * duration, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+
+  for (let i = 0; i < data.length; i++) {
+    data[i] = Math.random() * 2 - 1;
+  }
+
+  const source = audioCtx.createBufferSource();
+  source.buffer = buffer;
+
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = "highpass";
+  filter.frequency.value = highpass;
+
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(volume, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  source.start(now);
+  source.stop(now + duration);
+}
+
+function playLoad() {
+  playTone(520, 0.09, "triangle", 0.035);
+}
+
+function playRelease() {
+  playTone(290, 0.08, "sawtooth", 0.05, 520);
+  setTimeout(() => playNoiseBurst(0.05, 0.02, 1200), 20);
+}
+
+function playTargetHit() {
+  playTone(900, 0.06, "square", 0.05);
+  setTimeout(() => playTone(1200, 0.09, "square", 0.045), 45);
+  setTimeout(() => playNoiseBurst(0.06, 0.02, 1400), 35);
+}
+
+function playNearHit() {
+  playTone(700, 0.06, "triangle", 0.04);
+  setTimeout(() => playTone(860, 0.08, "triangle", 0.035), 40);
+}
+
+function playMiss() {
+  playTone(220, 0.07, "sawtooth", 0.03, 160);
+}
+
 function playGood() {
   playTone(760, 0.08, "square", 0.04);
   setTimeout(() => playTone(960, 0.08, "square", 0.035), 50);
 }
+
 function playGreat() {
   playTone(620, 0.08, "triangle", 0.04);
   setTimeout(() => playTone(860, 0.08, "triangle", 0.04), 55);
   setTimeout(() => playTone(1120, 0.12, "triangle", 0.045), 110);
+  setTimeout(() => playNoiseBurst(0.07, 0.02, 1500), 40);
 }
-function playReset() { playTone(520, 0.06, "triangle", 0.03); }
-function playTargetHit() {
-  playTone(900, 0.07, "square", 0.045);
-  setTimeout(() => playTone(1180, 0.10, "square", 0.04), 45);
-}
-function playNearHit() {
-  playTone(700, 0.06, "triangle", 0.035);
-  setTimeout(() => playTone(860, 0.08, "triangle", 0.03), 35);
-}
-function playMiss() {
-  playTone(210, 0.10, "sawtooth", 0.03, 140);
+
+function playReset() {
+  playTone(520, 0.06, "triangle", 0.03);
 }
 
 /* =========================
@@ -389,10 +436,10 @@ async function loop() {
 
     if (
       !rightWrist || !rightShoulder || !rightHip || !leftShoulder ||
-      rightWrist.score < 0.25 ||
-      rightShoulder.score < 0.25 ||
-      rightHip.score < 0.25 ||
-      leftShoulder.score < 0.25
+      rightWrist.score < 0.2 ||
+      rightShoulder.score < 0.2 ||
+      rightHip.score < 0.2 ||
+      leftShoulder.score < 0.2
     ) {
       drawFallbackOverlay();
       setStatus("Upper body not clear. Face camera and step back.");
@@ -408,40 +455,38 @@ async function loop() {
     const torsoHeight = Math.abs(hipScreen.y - shoulderScreenGlobal.y);
     const shoulderSpan = Math.abs(shoulderScreenGlobal.x - leftShoulderScreen.x);
 
-    const baseW = Math.max(shoulderSpan * 1.15, 145);
-    const baseH = Math.max(torsoHeight * 0.95, 165);
-
-    const forgivingWidth = baseW * 1.25;
-    const forgivingHeight = baseH * 1.15;
-    const offsetX = 20; // closer to body
+    // Much easier, closer, bigger zones
+    const baseW = Math.max(shoulderSpan * 1.4, 180);
+    const baseH = Math.max(torsoHeight * 1.15, 210);
 
     loadBox = {
-      x: shoulderScreenGlobal.x - forgivingWidth - offsetX,
-      y: shoulderScreenGlobal.y - forgivingHeight * 0.15,
-      w: forgivingWidth,
-      h: forgivingHeight
+      x: shoulderScreenGlobal.x - baseW - 10,
+      y: shoulderScreenGlobal.y - baseH * 0.08,
+      w: baseW,
+      h: baseH
     };
 
     readyBox = {
-      x: loadBox.x + 8,
-      y: loadBox.y + 8,
-      w: loadBox.w - 16,
-      h: loadBox.h - 16
+      x: loadBox.x + 4,
+      y: loadBox.y + 4,
+      w: loadBox.w - 8,
+      h: loadBox.h - 8
     };
 
+    // Much easier target
     bullseye = {
-      x: shoulderScreenGlobal.x + Math.max(70, shoulderSpan * 0.55),
-      y: shoulderScreenGlobal.y + 8,
-      outerR: 48,
-      middleR: 28,
-      innerR: 12
+      x: shoulderScreenGlobal.x + Math.max(55, shoulderSpan * 0.38),
+      y: shoulderScreenGlobal.y + 14,
+      outerR: 90,
+      middleR: 56,
+      innerR: 24
     };
 
     followGuide = {
-      x1: bullseye.x + 18,
-      y1: bullseye.y + 10,
-      x2: bullseye.x + 115,
-      y2: bullseye.y + 92
+      x1: bullseye.x + 28,
+      y1: bullseye.y + 18,
+      x2: bullseye.x + 145,
+      y2: bullseye.y + 110
     };
 
     const wristInLoadBox = pointInRect(wristScreen.x, wristScreen.y, loadBox);
@@ -491,6 +536,11 @@ async function loop() {
       if (wristInReadyBox) {
         readyPoseFrames++;
 
+        // Always reward entering ready area a little
+        if (readyPoseFrames === 1) {
+          spawnBurst(wristScreen.x, wristScreen.y, BX.green, 28);
+        }
+
         if (readyPoseFrames >= HOLD_FRAMES_REQUIRED) {
           armReady = true;
           phase = "ARMED";
@@ -498,7 +548,7 @@ async function loop() {
           feedbackText = "ARM READY";
           feedbackTimer = 999999;
           playLoad();
-          spawnBurst(readyBox.x + readyBox.w / 2, readyBox.y + readyBox.h / 2, BX.green, 60);
+          spawnBurst(readyBox.x + readyBox.w / 2, readyBox.y + readyBox.h / 2, BX.green, 70);
           setStatus(`Pitch ${pitchCount + 1}/${MAX_PITCHES} · Great load. Throw to the target!`);
           wristHistory = [];
         } else {
@@ -514,7 +564,7 @@ async function loop() {
     }
 
     if (phase === "ARMED") {
-      if (wristHistory.length >= 5) {
+      if (wristHistory.length >= 4) {
         const first = wristHistory[0];
         const last = wristHistory[wristHistory.length - 1];
 
@@ -522,12 +572,16 @@ async function loop() {
         const upwardY = first.y - last.y;
 
         const forwardX = Math.max(0, rawForwardX);
-        const power = forwardX + Math.max(0, upwardY) * 0.25;
-        currentPower = Math.min(360, power * 2.35);
+        const power = forwardX + Math.max(0, upwardY) * 0.28;
+        currentPower = Math.min(380, power * 2.8);
 
         if (forwardX > releaseThreshold) {
           releasePoint = { x: wristScreen.x, y: wristScreen.y };
           targetDistance = Math.hypot(releasePoint.x - bullseye.x, releasePoint.y - bullseye.y);
+
+          // ALWAYS give some reward
+          spawnBurst(releasePoint.x, releasePoint.y, BX.orange, Math.max(45, power * 1.8));
+          spawnCharacterBall(wristScreen.x, wristScreen.y, Math.max(55, power * 1.4));
 
           if (targetDistance <= bullseye.innerR) {
             targetHitLevel = "perfect";
@@ -535,36 +589,34 @@ async function loop() {
             formScores.target = 100;
             feedbackText = "BULLSEYE!";
             playTargetHit();
-            spawnBurst(bullseye.x, bullseye.y, BX.yellow, power * 1.7);
-            spawnStarBurst(bullseye.x, bullseye.y, power * 1.4);
+            spawnBurst(bullseye.x, bullseye.y, BX.yellow, power * 2.0);
+            spawnStarBurst(bullseye.x, bullseye.y, power * 1.5);
           } else if (targetDistance <= bullseye.middleR) {
             targetHitLevel = "good";
             targetState = "hit";
-            formScores.target = 85;
+            formScores.target = 88;
             feedbackText = "TARGET HIT";
             playTargetHit();
-            spawnBurst(bullseye.x, bullseye.y, BX.green, power * 1.45);
-          } else if (targetDistance <= bullseye.outerR + 22) {
+            spawnBurst(bullseye.x, bullseye.y, BX.green, power * 1.7);
+          } else if (targetDistance <= bullseye.outerR + 40) {
             targetHitLevel = "near";
             targetState = "near";
-            formScores.target = 60;
-            feedbackText = "SO CLOSE";
+            formScores.target = 68;
+            feedbackText = "NICE TRY";
             playNearHit();
-            spawnBurst(bullseye.x, bullseye.y, BX.orange, power * 1.1);
+            spawnBurst(bullseye.x, bullseye.y, BX.orange, power * 1.35);
           } else {
             targetHitLevel = "miss";
             targetState = "miss";
-            formScores.target = 25;
-            feedbackText = "MISS THE TARGET";
+            formScores.target = 42; // still give partial positive score for kids
+            feedbackText = "THROW AGAIN!";
             playMiss();
-            spawnBurst(releasePoint.x, releasePoint.y, BX.red, power * 0.9);
+            spawnBurst(releasePoint.x, releasePoint.y, BX.pink, power * 1.2);
           }
 
-          formScores.release = Math.min(100, Math.round(power * 1.45));
+          formScores.release = Math.min(100, Math.round(power * 1.6));
           feedbackTimer = 60;
           phase = "FOLLOW";
-
-          spawnCharacterBall(wristScreen.x, wristScreen.y, power * 1.3);
 
           setStatus(`Pitch ${pitchCount + 1}/${MAX_PITCHES} · Follow through down the orange path.`);
           wristHistory = [];
@@ -575,13 +627,13 @@ async function loop() {
       return;
     }
 
-    if (phase === "FOLLOW" && wristHistory.length >= 3) {
+    if (phase === "FOLLOW" && wristHistory.length >= 2) {
       const first = wristHistory[0];
       const last = wristHistory[wristHistory.length - 1];
       const travel = Math.abs(last.x - first.x) + Math.abs(last.y - first.y);
 
       if (travel > FOLLOW_TRAVEL_REQUIRED) {
-        formScores.follow = Math.min(100, 52 + Math.round(travel * 2.4));
+        formScores.follow = Math.min(100, 65 + Math.round(travel * 1.8));
         finalizeThrow();
       } else {
         setStatus(`Pitch ${pitchCount + 1}/${MAX_PITCHES} · Keep following through.`);
@@ -596,8 +648,8 @@ async function loop() {
 
 function finalizeThrow() {
   formScores.total = Math.round(
-    formScores.load * 0.24 +
-    formScores.release * 0.26 +
+    formScores.load * 0.22 +
+    formScores.release * 0.28 +
     formScores.target * 0.28 +
     formScores.follow * 0.22
   );
@@ -618,49 +670,50 @@ function finalizeThrow() {
   } else if (targetHitLevel === "near") {
     targetNote = "Close to the target.";
   } else {
-    targetNote = "Missed the target.";
+    targetNote = "Big throw! Try aiming more at the target.";
   }
 
   if (formScores.total >= 92) {
     note = "Excellent mechanics and aim!";
     feedbackText = "STAR THROW";
     burstColor = BX.yellow;
-    burstPower = currentPower * 1.9;
+    burstPower = currentPower * 2.1;
     playGreat();
   } else if (formScores.total >= 78) {
     note = "Strong throw. Nice mechanics.";
     feedbackText = "STRONG FORM";
     burstColor = BX.green;
-    burstPower = currentPower * 1.5;
+    burstPower = currentPower * 1.7;
     playGood();
   } else if (formScores.target < 60) {
-    note = "Good load. Aim more at the target.";
+    note = "Good load. Aim a little more at the target.";
     feedbackText = "AIM FOR TARGET";
     burstColor = BX.orange;
-    burstPower = currentPower * 1.2;
+    burstPower = currentPower * 1.45;
     playGood();
   } else if (formScores.follow < 58) {
     note = "Nice start. Finish down the orange path.";
     feedbackText = "MORE FOLLOW-THROUGH";
     burstColor = BX.aqua;
-    burstPower = currentPower * 1.18;
+    burstPower = currentPower * 1.35;
     playGood();
   } else {
-    note = "Good start. Keep practicing.";
+    note = "Great job. Keep practicing.";
     feedbackText = "KEEP GOING";
-    burstColor = BX.blue;
-    burstPower = currentPower * 1.08;
+    burstColor = BX.pink;
+    burstPower = currentPower * 1.3;
     playGood();
   }
 
-  feedbackTimer = 90;
+  feedbackTimer = 100;
   lastResult = {
     total: formScores.total,
     note,
     targetNote
   };
 
-  spawnBigImpact(burstColor, burstPower);
+  // Always give a big celebration
+  spawnBigImpact(burstColor, Math.max(130, burstPower));
 
   if (pitchCount >= MAX_PITCHES) {
     phase = "DONE";
@@ -770,6 +823,126 @@ function updateGame() {
 }
 
 /* =========================
+   FX
+========================= */
+function spawnBurst(x, y, color, power = 40) {
+  const ringCount = 4 + Math.floor(power / 22);
+
+  for (let i = 0; i < ringCount; i++) {
+    rings.push({
+      x,
+      y,
+      r: 14 + i * 22,
+      grow: 6 + i * 1.2,
+      alpha: 0.98 - i * 0.08,
+      color: i % 2 === 0 ? color : BX.aqua
+    });
+  }
+
+  for (let i = 0; i < 22; i++) {
+    trailDots.push({
+      x,
+      y,
+      vx: Math.random() * 14 - 7,
+      vy: Math.random() * 14 - 7,
+      size: 7 + Math.random() * 11,
+      alpha: 0.98,
+      color: [color, BX.yellow, BX.pink, BX.aqua, BX.purple][Math.floor(Math.random() * 5)]
+    });
+  }
+
+  addFlash(color, 0.2);
+}
+
+function spawnBigImpact(color, power) {
+  const cx = gameCanvas.width * 0.68;
+  const cy = gameCanvas.height * 0.36;
+
+  const ringCount =
+    power > 260 ? 18 :
+    power > 200 ? 14 :
+    power > 140 ? 11 : 9;
+
+  const ringScale =
+    power > 260 ? 2.4 :
+    power > 200 ? 2.0 :
+    power > 140 ? 1.6 : 1.25;
+
+  for (let i = 0; i < ringCount; i++) {
+    rings.push({
+      x: cx,
+      y: cy,
+      r: (28 + i * 30) * ringScale,
+      grow: (7 + i * 1.1) * ringScale,
+      alpha: 0.92 - i * 0.045,
+      color: i % 3 === 0 ? BX.yellow : i % 3 === 1 ? color : BX.aqua
+    });
+  }
+
+  for (let i = 0; i < ringCount * 10; i++) {
+    confetti.push({
+      x: cx,
+      y: cy,
+      vx: Math.random() * 24 - 12,
+      vy: Math.random() * -18 - 2,
+      w: 8 + Math.random() * 18,
+      h: 5 + Math.random() * 12,
+      rot: Math.random() * Math.PI,
+      spin: (Math.random() - 0.5) * 0.7,
+      alpha: 1,
+      color: [BX.blue, BX.orange, BX.yellow, BX.green, BX.pink, BX.purple, BX.aqua][Math.floor(Math.random() * 7)]
+    });
+  }
+
+  for (let i = 0; i < 36; i++) {
+    trailDots.push({
+      x: cx,
+      y: cy,
+      vx: Math.random() * 18 - 9,
+      vy: Math.random() * 18 - 9,
+      size: 8 + Math.random() * 15,
+      alpha: 0.98,
+      color: [BX.blue, BX.orange, BX.yellow, BX.green, BX.pink, BX.aqua][Math.floor(Math.random() * 6)]
+    });
+  }
+
+  spawnStarBurst(cx, cy, power * 1.3);
+  addFlash(color, 0.4);
+}
+
+function spawnStarBurst(x, y, power) {
+  const count = power > 180 ? 4 : power > 110 ? 3 : 2;
+  for (let i = 0; i < count; i++) {
+    starBursts.push({
+      x: x + (Math.random() * 100 - 50),
+      y: y + (Math.random() * 100 - 50),
+      scale: 0.9 + Math.random() * 0.7,
+      alpha: 0.95,
+      life: 30 + Math.floor(Math.random() * 14),
+      color: [BX.yellow, BX.aqua, BX.pink, BX.orange, BX.green][Math.floor(Math.random() * 5)]
+    });
+  }
+}
+
+function spawnCharacterBall(x, y, power) {
+  characterBall = {
+    x,
+    y,
+    vx: 4 + power * 0.045,
+    vy: -2.5 - power * 0.016,
+    life: 44,
+    rotation: 0,
+    spin: 0.08 + power * 0.0007,
+    size: 24 + Math.min(15, power * 0.06),
+    mood: power > 92 ? "fierce" : "happy"
+  };
+}
+
+function addFlash(color, alpha = 0.25) {
+  flashes.push({ color, alpha });
+}
+
+/* =========================
    DRAW
 ========================= */
 function drawGame() {
@@ -852,9 +1025,6 @@ function drawBackground() {
   gameCtx.fill();
 }
 
-/* =========================
-   UI + EFFECT DRAW HELPERS
-========================= */
 function drawCoachZones() {
   roundedRect(
     gameCtx,

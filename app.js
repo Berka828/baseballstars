@@ -67,9 +67,9 @@ let releasePoint = null;
 let targetHitLevel = "none"; // perfect / good / near / miss
 let targetDistance = 9999;
 
-const FORWARD_DIRECTION = 1;
-const releaseThreshold = 48;
-const HOLD_FRAMES_REQUIRED = 12;
+const FORWARD_DIRECTION = 1; // change to -1 if your setup feels reversed
+const releaseThreshold = 70; // less trigger-happy
+const HOLD_FRAMES_REQUIRED = 8; // easier for kids
 const FOLLOW_TRAVEL_REQUIRED = 10;
 
 const BX = {
@@ -408,21 +408,25 @@ async function loop() {
     const torsoHeight = Math.abs(hipScreen.y - shoulderScreenGlobal.y);
     const shoulderSpan = Math.abs(shoulderScreenGlobal.x - leftShoulderScreen.x);
 
-    const boxW = Math.max(shoulderSpan * 1.15, 145);
-    const boxH = Math.max(torsoHeight * 0.95, 165);
+    const baseW = Math.max(shoulderSpan * 1.15, 145);
+    const baseH = Math.max(torsoHeight * 0.95, 165);
+
+    const forgivingWidth = baseW * 1.25;
+    const forgivingHeight = baseH * 1.15;
+    const offsetX = 20; // closer to body
 
     loadBox = {
-      x: shoulderScreenGlobal.x - boxW - 50,
-      y: shoulderScreenGlobal.y - boxH * 0.22,
-      w: boxW,
-      h: boxH
+      x: shoulderScreenGlobal.x - forgivingWidth - offsetX,
+      y: shoulderScreenGlobal.y - forgivingHeight * 0.15,
+      w: forgivingWidth,
+      h: forgivingHeight
     };
 
     readyBox = {
-      x: loadBox.x + 12,
-      y: loadBox.y + 12,
-      w: loadBox.w - 24,
-      h: loadBox.h - 24
+      x: loadBox.x + 8,
+      y: loadBox.y + 8,
+      w: loadBox.w - 16,
+      h: loadBox.h - 16
     };
 
     bullseye = {
@@ -661,13 +665,19 @@ function finalizeThrow() {
   if (pitchCount >= MAX_PITCHES) {
     phase = "DONE";
     throwCooldown = true;
-    resultPauseTimer = 160;
+    resultPauseTimer = 240;
     armReady = false;
     boxState = "blue";
     targetState = "idle";
-    setStatus(`Round complete. ${MAX_PITCHES} pitches done. Press Reset Game to play again.`);
-    feedbackText = "ROUND COMPLETE";
-    feedbackTimer = 120;
+    feedbackText = "FINAL THROW COMPLETE";
+    feedbackTimer = 160;
+    setStatus("Nice work! Final results loading...");
+
+    setTimeout(() => {
+      feedbackText = "ROUND COMPLETE";
+      setStatus("Press Reset Game to play again.");
+    }, 2000);
+
     return;
   }
 
@@ -760,126 +770,6 @@ function updateGame() {
 }
 
 /* =========================
-   FX
-========================= */
-function spawnBurst(x, y, color, power = 40) {
-  const ringCount = 3 + Math.floor(power / 18);
-
-  for (let i = 0; i < ringCount; i++) {
-    rings.push({
-      x,
-      y,
-      r: 12 + i * 20,
-      grow: 5 + i * 1.1,
-      alpha: 0.95 - i * 0.08,
-      color: i % 2 === 0 ? color : BX.aqua
-    });
-  }
-
-  for (let i = 0; i < 14; i++) {
-    trailDots.push({
-      x,
-      y,
-      vx: Math.random() * 12 - 6,
-      vy: Math.random() * 12 - 6,
-      size: 6 + Math.random() * 9,
-      alpha: 0.95,
-      color: [color, BX.yellow, BX.pink, BX.aqua][Math.floor(Math.random() * 4)]
-    });
-  }
-
-  addFlash(color, 0.18);
-}
-
-function spawnBigImpact(color, power) {
-  const cx = gameCanvas.width * 0.68;
-  const cy = gameCanvas.height * 0.36;
-
-  const ringCount =
-    power > 260 ? 18 :
-    power > 200 ? 14 :
-    power > 140 ? 11 : 8;
-
-  const ringScale =
-    power > 260 ? 2.25 :
-    power > 200 ? 1.85 :
-    power > 140 ? 1.45 : 1.12;
-
-  for (let i = 0; i < ringCount; i++) {
-    rings.push({
-      x: cx,
-      y: cy,
-      r: (26 + i * 28) * ringScale,
-      grow: (6 + i * 1.05) * ringScale,
-      alpha: 0.9 - i * 0.045,
-      color: i % 3 === 0 ? BX.yellow : i % 3 === 1 ? color : BX.aqua
-    });
-  }
-
-  for (let i = 0; i < ringCount * 8; i++) {
-    confetti.push({
-      x: cx,
-      y: cy,
-      vx: Math.random() * 22 - 11,
-      vy: Math.random() * -16 - 2,
-      w: 8 + Math.random() * 16,
-      h: 5 + Math.random() * 11,
-      rot: Math.random() * Math.PI,
-      spin: (Math.random() - 0.5) * 0.65,
-      alpha: 1,
-      color: [BX.blue, BX.orange, BX.yellow, BX.green, BX.pink, BX.purple][Math.floor(Math.random() * 6)]
-    });
-  }
-
-  for (let i = 0; i < 28; i++) {
-    trailDots.push({
-      x: cx,
-      y: cy,
-      vx: Math.random() * 16 - 8,
-      vy: Math.random() * 16 - 8,
-      size: 8 + Math.random() * 14,
-      alpha: 0.95,
-      color: [BX.blue, BX.orange, BX.yellow, BX.green, BX.pink, BX.aqua][Math.floor(Math.random() * 6)]
-    });
-  }
-
-  spawnStarBurst(cx, cy, power * 1.2);
-  addFlash(color, 0.36);
-}
-
-function spawnStarBurst(x, y, power) {
-  const count = power > 180 ? 3 : power > 110 ? 2 : 1;
-  for (let i = 0; i < count; i++) {
-    starBursts.push({
-      x: x + (Math.random() * 80 - 40),
-      y: y + (Math.random() * 80 - 40),
-      scale: 0.8 + Math.random() * 0.5,
-      alpha: 0.9,
-      life: 28 + Math.floor(Math.random() * 10),
-      color: [BX.yellow, BX.aqua, BX.pink, BX.orange][Math.floor(Math.random() * 4)]
-    });
-  }
-}
-
-function spawnCharacterBall(x, y, power) {
-  characterBall = {
-    x,
-    y,
-    vx: 4 + power * 0.045,
-    vy: -2.5 - power * 0.016,
-    life: 44,
-    rotation: 0,
-    spin: 0.08 + power * 0.0007,
-    size: 22 + Math.min(13, power * 0.055),
-    mood: power > 92 ? "fierce" : "happy"
-  };
-}
-
-function addFlash(color, alpha = 0.25) {
-  flashes.push({ color, alpha });
-}
-
-/* =========================
    DRAW
 ========================= */
 function drawGame() {
@@ -901,22 +791,34 @@ function drawGame() {
 }
 
 function drawBackground() {
+  if (video && video.readyState >= 2) {
+    gameCtx.save();
+    gameCtx.translate(gameCanvas.width, 0);
+    gameCtx.scale(-1, 1);
+    gameCtx.globalAlpha = 0.25;
+    gameCtx.drawImage(video, 0, 0, gameCanvas.width, gameCanvas.height);
+    gameCtx.restore();
+
+    gameCtx.fillStyle = "rgba(5,15,25,0.65)";
+    gameCtx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+  }
+
   const bg = gameCtx.createLinearGradient(0, 0, 0, gameCanvas.height);
-  bg.addColorStop(0, "#1e3348");
-  bg.addColorStop(0.34, "#24394e");
-  bg.addColorStop(0.35, "#1b2b3c");
-  bg.addColorStop(1, "#204a29");
+  bg.addColorStop(0, "rgba(30,51,72,0.70)");
+  bg.addColorStop(0.34, "rgba(36,57,78,0.62)");
+  bg.addColorStop(0.35, "rgba(27,43,60,0.55)");
+  bg.addColorStop(1, "rgba(32,74,41,0.70)");
   gameCtx.fillStyle = bg;
   gameCtx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
 
-  roundedRect(gameCtx, 0, 95, gameCanvas.width, 250, 0, "rgba(8,18,29,0.42)", null);
+  roundedRect(gameCtx, 0, 95, gameCanvas.width, 250, 0, "rgba(8,18,29,0.32)", null);
 
   for (let i = 0; i < 8; i++) {
     const x = 120 + i * 160;
-    roundedRect(gameCtx, x, 90, 8, 270, 4, "rgba(180,210,230,0.10)", null);
+    roundedRect(gameCtx, x, 90, 8, 270, 4, "rgba(180,210,230,0.08)", null);
   }
 
-  gameCtx.strokeStyle = "rgba(220,240,255,0.05)";
+  gameCtx.strokeStyle = "rgba(220,240,255,0.04)";
   gameCtx.lineWidth = 1;
   for (let i = 0; i < 12; i++) {
     gameCtx.beginPath();
@@ -925,7 +827,7 @@ function drawBackground() {
     gameCtx.stroke();
   }
 
-  roundedRect(gameCtx, 0, 315, gameCanvas.width, 78, 0, "rgba(17,35,58,0.65)", null);
+  roundedRect(gameCtx, 0, 315, gameCanvas.width, 78, 0, "rgba(17,35,58,0.45)", null);
 
   const chips = [
     { x: 120, c: BX.yellow },
@@ -936,11 +838,11 @@ function drawBackground() {
   ];
 
   chips.forEach((chip) => {
-    roundedRect(gameCtx, chip.x, 340, 140, 24, 12, `${chip.c}22`, `${chip.c}55`, 2);
+    roundedRect(gameCtx, chip.x, 340, 140, 24, 12, `${chip.c}18`, `${chip.c}40`, 2);
   });
 
   for (let i = 0; i < 10; i++) {
-    gameCtx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.03)";
+    gameCtx.fillStyle = i % 2 === 0 ? "rgba(255,255,255,0.025)" : "rgba(0,0,0,0.025)";
     gameCtx.fillRect(0, 455 + i * 30, gameCanvas.width, 30);
   }
 
@@ -950,6 +852,9 @@ function drawBackground() {
   gameCtx.fill();
 }
 
+/* =========================
+   UI + EFFECT DRAW HELPERS
+========================= */
 function drawCoachZones() {
   roundedRect(
     gameCtx,
@@ -1295,6 +1200,10 @@ function drawSilhouette(keypoints) {
       );
       overlayCtx.stroke();
     }
+
+    overlayCtx.fillStyle = "rgba(255,255,255,0.96)";
+    overlayCtx.font = "bold 18px Arial";
+    overlayCtx.fillText(label, readyBox.x + 8, readyBox.y + 28);
   }
 
   if (bullseye) {

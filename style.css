@@ -253,6 +253,25 @@ button.secondary {
   }
 }
 
+select#cameraSelect {
+  appearance: none;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 16px;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #ffffff;
+  background: linear-gradient(
+    180deg,
+    rgba(44, 64, 87, 0.95) 0%,
+    rgba(24, 39, 58, 0.95) 100%
+  );
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  min-width: 230px;
+}
+
 @media (max-width: 720px) {
   .appShell {
     padding: 12px;

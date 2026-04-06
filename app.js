@@ -32,10 +32,10 @@ let elbowScreen = null;
 let loadBox = null;
 let readyBox = null;
 let targetCenter = null;
-let targetOuterR = 150;
-let targetMidR = 95;
-let targetInnerR = 46;
 let followGuide = null;
+
+let targetZones = [];
+let activeTargetZone = null;
 
 let wristHistory = [];
 let readyFrames = 0;
@@ -57,6 +57,10 @@ let flashes = [];
 let starBursts = [];
 let projectiles = [];
 let hitLabels = [];
+let shockwaves = [];
+let impactDust = [];
+let streaks = [];
+let screenPulse = 0;
 
 let bgFade = 0;
 let bgFadeTarget = 0;
@@ -81,10 +85,11 @@ const COLORS = {
   red: "#ff6b6b",
   white: "#ffffff",
   navy: "#07121f",
-  dark: "#07131f"
+  dark: "#07131f",
+  lime: "#bbff6a"
 };
 
-// mitt position inside background image
+// base mitt position inside background image
 const MITT_U = 0.765;
 const MITT_V = 0.405;
 
@@ -329,9 +334,14 @@ function resetGame() {
   starBursts = [];
   projectiles = [];
   hitLabels = [];
+  shockwaves = [];
+  impactDust = [];
+  streaks = [];
   mittFlash = 0;
   mittPulse = 0;
   shakePower = 0;
+  screenPulse = 0;
+  activeTargetZone = null;
 
   playReset();
   setStatus(`Pitch 1/${MAX_PITCHES} · Put your throwing hand in the blue box.`);
@@ -447,10 +457,11 @@ function processPose() {
     gameCanvas.height
   );
 
-  targetCenter = {
-    x: bgRect.x + bgRect.w * MITT_U,
-    y: bgRect.y + bgRect.h * MITT_V
-  };
+  buildTargetZones(bgRect);
+
+  targetCenter = activeTargetZone
+    ? { x: activeTargetZone.x, y: activeTargetZone.y }
+    : { x: bgRect.x + bgRect.w * MITT_U, y: bgRect.y + bgRect.h * MITT_V };
 
   followGuide = {
     x1: targetCenter.x - 14,
@@ -527,10 +538,112 @@ function processPose() {
 }
 
 /* =========================
+   TARGET ZONES
+========================= */
+function buildTargetZones(bgRect) {
+  const s = Math.min(bgRect.w, bgRect.h);
+
+  targetZones = [
+    {
+      id: "mitt",
+      label: "GLOVE SNAP",
+      x: bgRect.x + bgRect.w * 0.765,
+      y: bgRect.y + bgRect.h * 0.405,
+      innerR: s * 0.038,
+      midR: s * 0.070,
+      outerR: s * 0.110,
+      color: COLORS.yellow,
+      weight: 1.0
+    },
+    {
+      id: "mittLow",
+      label: "LOW SAVE",
+      x: bgRect.x + bgRect.w * 0.738,
+      y: bgRect.y + bgRect.h * 0.462,
+      innerR: s * 0.034,
+      midR: s * 0.065,
+      outerR: s * 0.105,
+      color: COLORS.orange,
+      weight: 0.95
+    },
+    {
+      id: "chest",
+      label: "CHEST BLOCK",
+      x: bgRect.x + bgRect.w * 0.505,
+      y: bgRect.y + bgRect.h * 0.520,
+      innerR: s * 0.040,
+      midR: s * 0.080,
+      outerR: s * 0.122,
+      color: COLORS.green,
+      weight: 0.92
+    },
+    {
+      id: "helmet",
+      label: "MASK TAP",
+      x: bgRect.x + bgRect.w * 0.520,
+      y: bgRect.y + bgRect.h * 0.255,
+      innerR: s * 0.032,
+      midR: s * 0.060,
+      outerR: s * 0.090,
+      color: COLORS.aqua,
+      weight: 0.85
+    },
+    {
+      id: "leftPad",
+      label: "KNEE SAVE",
+      x: bgRect.x + bgRect.w * 0.315,
+      y: bgRect.y + bgRect.h * 0.720,
+      innerR: s * 0.035,
+      midR: s * 0.065,
+      outerR: s * 0.104,
+      color: COLORS.pink,
+      weight: 0.88
+    },
+    {
+      id: "rightPad",
+      label: "SHIN SAVE",
+      x: bgRect.x + bgRect.w * 0.685,
+      y: bgRect.y + bgRect.h * 0.725,
+      innerR: s * 0.035,
+      midR: s * 0.065,
+      outerR: s * 0.104,
+      color: COLORS.lime,
+      weight: 0.88
+    },
+    {
+      id: "centerBlock",
+      label: "CENTER BLOCK",
+      x: bgRect.x + bgRect.w * 0.555,
+      y: bgRect.y + bgRect.h * 0.620,
+      innerR: s * 0.038,
+      midR: s * 0.070,
+      outerR: s * 0.115,
+      color: COLORS.blue,
+      weight: 0.90
+    }
+  ];
+
+  if (!activeTargetZone || !targetZones.find(z => z.id === activeTargetZone.id)) {
+    activeTargetZone = targetZones[0];
+  }
+}
+
+function chooseNextTargetZone() {
+  if (!targetZones.length) return;
+
+  const previousId = activeTargetZone ? activeTargetZone.id : null;
+  const options = targetZones.filter(z => z.id !== previousId);
+  const pool = options.length ? options : targetZones;
+
+  activeTargetZone = pool[Math.floor(Math.random() * pool.length)];
+  targetCenter = { x: activeTargetZone.x, y: activeTargetZone.y };
+}
+
+/* =========================
    THROW LOGIC
 ========================= */
 function triggerThrow(power) {
-  if (!wristScreen || !targetCenter || !shoulderScreen || !elbowScreen) return;
+  if (!wristScreen || !targetCenter || !shoulderScreen || !elbowScreen || !activeTargetZone) return;
 
   const histFirst = wristHistory[0] || wristScreen;
   const histLast = wristHistory[wristHistory.length - 1] || wristScreen;
@@ -544,72 +657,30 @@ function triggerThrow(power) {
   const elbowToWristX = (wristScreen.x - elbowScreen.x) * FORWARD_DIRECTION;
   const elbowToWristY = elbowScreen.y - wristScreen.y;
 
-  const aimX =
-    targetCenter.x +
-    clamp(shoulderToWristX * 1.2 + motionDx * 0.9 + elbowToWristX * 0.6, -180, 180);
+  const projectedHit = calculateProjectedHit(
+    shoulderToWristX,
+    shoulderToWristY,
+    elbowToWristX,
+    elbowToWristY,
+    motionDx,
+    motionDy,
+    power
+  );
 
-  const aimY =
-    targetCenter.y -
-    clamp(shoulderToWristY * 0.9 + motionDy * 0.85 + elbowToWristY * 0.4, -120, 140);
-
-  const projectedHit = {
-    x: clamp(aimX, 40, gameCanvas.width - 40),
-    y: clamp(aimY, 70, gameCanvas.height - 60)
-  };
-
-  const dist = Math.hypot(projectedHit.x - targetCenter.x, projectedHit.y - targetCenter.y);
-  const centerFactor = clamp(1 - dist / targetOuterR, 0, 1);
-  const throwFactor = clamp(power / 220, 0, 1);
+  const result = evaluateHit(projectedHit, power, activeTargetZone);
 
   playThrow();
+  spawnReleaseTrail(wristScreen.x, wristScreen.y, projectedHit.x, projectedHit.y, clamp(power / 220, 0, 1));
 
-  // small release cue only
-  spawnReleaseTrail(wristScreen.x, wristScreen.y, projectedHit.x, projectedHit.y, throwFactor);
-
-  let impactPower;
-  let impactColor;
-  let label;
-  let labelColor;
-  let shake;
-
-  if (dist <= targetInnerR) {
-    label = "BULLSEYE!";
-    labelColor = COLORS.yellow;
-    impactColor = COLORS.yellow;
-    impactPower = 260 + centerFactor * 220 + throwFactor * 110;
-    shake = 16;
-    playHit();
-    flashGamePanel();
-  } else if (dist <= targetMidR) {
-    label = "TARGET HIT";
-    labelColor = COLORS.green;
-    impactColor = COLORS.green;
-    impactPower = 190 + centerFactor * 170 + throwFactor * 90;
-    shake = 11;
-    playHit();
-    flashGamePanel();
-  } else if (dist <= targetOuterR) {
-    label = "NICE TRY";
-    labelColor = COLORS.orange;
-    impactColor = COLORS.orange;
-    impactPower = 120 + centerFactor * 100 + throwFactor * 70;
-    shake = 7;
-    playNear();
-  } else {
-    label = "BIG THROW!";
-    labelColor = COLORS.pink;
-    impactColor = COLORS.pink;
-    impactPower = 90 + throwFactor * 65;
-    shake = 4;
-    playMiss();
-  }
-
-  feedbackText = label;
+  feedbackText = result.label;
   feedbackTimer = 75;
 
-  spawnBigImpact(projectedHit.x, projectedHit.y, impactColor, impactPower);
-  spawnHitLabel(projectedHit.x, projectedHit.y - 24, label, labelColor);
-  shakePower = Math.max(shakePower, shake);
+  spawnBigImpact(projectedHit.x, projectedHit.y, result.impactColor, result.impactPower, result.tier);
+  spawnHitLabel(projectedHit.x, projectedHit.y - 24, result.label, result.labelColor);
+  spawnScreenShock(projectedHit.x, projectedHit.y, result.tier, result.impactColor);
+
+  shakePower = Math.max(shakePower, result.shake);
+  screenPulse = Math.max(screenPulse, result.screenPulse);
   mittFlash = 1;
   mittPulse = 1;
 
@@ -642,6 +713,8 @@ function triggerThrow(power) {
     feedbackTimer = 0;
     currentPower = 0;
 
+    chooseNextTargetZone();
+
     setStatus(`Reset for pitch ${pitchCount + 1}/${MAX_PITCHES}...`);
 
     setTimeout(() => {
@@ -650,6 +723,115 @@ function triggerThrow(power) {
       setStatus(`Pitch ${pitchCount + 1}/${MAX_PITCHES} · Move arm out, then reload.`);
     }, 1250);
   }, 700);
+}
+
+function calculateProjectedHit(
+  shoulderToWristX,
+  shoulderToWristY,
+  elbowToWristX,
+  elbowToWristY,
+  motionDx,
+  motionDy,
+  power
+) {
+  const powerNorm = clamp(power / 220, 0, 1);
+  const activeBiasX = activeTargetZone.x - targetCenter.x;
+  const activeBiasY = activeTargetZone.y - targetCenter.y;
+
+  const aimX =
+    activeTargetZone.x +
+    clamp(
+      shoulderToWristX * 1.15 +
+      motionDx * 0.95 +
+      elbowToWristX * 0.55 +
+      activeBiasX,
+      -220,
+      220
+    );
+
+  const aimY =
+    activeTargetZone.y -
+    clamp(
+      shoulderToWristY * 0.88 +
+      motionDy * 0.82 +
+      elbowToWristY * 0.35 -
+      activeBiasY,
+      -150,
+      170
+    );
+
+  const randomness =
+    powerNorm < 0.35 ? 32 :
+    powerNorm < 0.65 ? 20 : 12;
+
+  return {
+    x: clamp(aimX + rand(-randomness, randomness), 40, gameCanvas.width - 40),
+    y: clamp(aimY + rand(-randomness, randomness), 70, gameCanvas.height - 60)
+  };
+}
+
+function evaluateHit(projectedHit, power, zone) {
+  const dist = Math.hypot(projectedHit.x - zone.x, projectedHit.y - zone.y);
+  const centerFactor = clamp(1 - dist / zone.outerR, 0, 1);
+  const throwFactor = clamp(power / 220, 0, 1);
+
+  let tier;
+  let label;
+  let labelColor;
+  let impactColor;
+  let impactPower;
+  let shake;
+  let screenPulseValue;
+
+  if (dist <= zone.innerR) {
+    tier = "bullseye";
+    label = `${zone.label}!`;
+    labelColor = zone.color;
+    impactColor = zone.color;
+    impactPower = 300 + centerFactor * 240 + throwFactor * 120;
+    shake = 18;
+    screenPulseValue = 0.55;
+    playHit();
+    flashGamePanel();
+  } else if (dist <= zone.midR) {
+    tier = "strong";
+    label = "TARGET HIT";
+    labelColor = COLORS.green;
+    impactColor = zone.color;
+    impactPower = 220 + centerFactor * 170 + throwFactor * 90;
+    shake = 12;
+    screenPulseValue = 0.35;
+    playHit();
+    flashGamePanel();
+  } else if (dist <= zone.outerR) {
+    tier = "graze";
+    label = "NICE TRY";
+    labelColor = COLORS.orange;
+    impactColor = COLORS.orange;
+    impactPower = 145 + centerFactor * 95 + throwFactor * 70;
+    shake = 8;
+    screenPulseValue = 0.22;
+    playNear();
+  } else {
+    tier = "miss";
+    label = "BIG THROW!";
+    labelColor = COLORS.pink;
+    impactColor = COLORS.pink;
+    impactPower = 100 + throwFactor * 65;
+    shake = 5;
+    screenPulseValue = 0.14;
+    playMiss();
+  }
+
+  return {
+    tier,
+    label,
+    labelColor,
+    impactColor,
+    impactPower,
+    shake,
+    screenPulse: screenPulseValue
+  };
 }
 
 /* =========================
@@ -679,6 +861,18 @@ function spawnReleaseTrail(x1, y1, x2, y2, throwFactor) {
       color: i % 2 === 0 ? COLORS.aqua : COLORS.orange
     });
   }
+
+  for (let i = 0; i < 5; i++) {
+    streaks.push({
+      x: x1,
+      y: y1,
+      vx: (x2 - x1) * (0.03 + Math.random() * 0.02),
+      vy: (y2 - y1) * (0.03 + Math.random() * 0.02),
+      len: 16 + Math.random() * 16,
+      alpha: 0.65,
+      color: throwFactor > 0.6 ? COLORS.yellow : COLORS.aqua
+    });
+  }
 }
 
 function spawnHitLabel(x, y, text, color) {
@@ -688,7 +882,8 @@ function spawnHitLabel(x, y, text, color) {
     text,
     color,
     alpha: 1,
-    vy: -0.35
+    vy: -0.35,
+    scale: 1
   });
 }
 
@@ -711,6 +906,7 @@ function updateFX() {
 
   mittFlash *= 0.90;
   mittPulse *= 0.92;
+  screenPulse *= 0.90;
 
   shakePower *= 0.86;
   shakeX = (Math.random() * 2 - 1) * shakePower;
@@ -767,9 +963,35 @@ function updateFX() {
     const h = hitLabels[i];
     h.y += h.vy;
     h.alpha *= 0.95;
+    h.scale *= 1.01;
     if (h.alpha < 0.05) {
       hitLabels.splice(i, 1);
     }
+  }
+
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const s = shockwaves[i];
+    s.radius += s.grow;
+    s.alpha *= 0.92;
+    if (s.alpha < 0.04) shockwaves.splice(i, 1);
+  }
+
+  for (let i = impactDust.length - 1; i >= 0; i--) {
+    const d = impactDust[i];
+    d.x += d.vx;
+    d.y += d.vy;
+    d.radius *= 1.02;
+    d.alpha *= 0.95;
+    if (d.alpha < 0.04) impactDust.splice(i, 1);
+  }
+
+  for (let i = streaks.length - 1; i >= 0; i--) {
+    const s = streaks[i];
+    s.x += s.vx;
+    s.y += s.vy;
+    s.alpha *= 0.94;
+    s.len *= 0.98;
+    if (s.alpha < 0.05 || s.len < 4) streaks.splice(i, 1);
   }
 
   if (feedbackTimer > 0 && feedbackTimer < 999999) feedbackTimer--;
@@ -778,29 +1000,34 @@ function updateFX() {
 /* =========================
    FX SPAWN
 ========================= */
-function spawnBigImpact(x, y, color, power = 160) {
+function spawnBigImpact(x, y, color, power = 160, tier = "graze") {
   const ringCount =
-    power > 320 ? 22 :
-    power > 240 ? 18 :
-    power > 170 ? 13 : 9;
+    power > 340 ? 24 :
+    power > 260 ? 19 :
+    power > 180 ? 14 : 9;
 
   const ringScale =
-    power > 320 ? 3.1 :
-    power > 240 ? 2.45 :
-    power > 170 ? 1.9 : 1.25;
+    power > 340 ? 3.4 :
+    power > 260 ? 2.65 :
+    power > 180 ? 2.0 : 1.35;
 
   for (let i = 0; i < ringCount; i++) {
     rings.push({
       x,
       y,
-      r: (18 + i * 24) * ringScale,
-      grow: (5 + i * 1.0) * ringScale,
-      alpha: 0.95 - i * 0.042,
+      r: (10 + i * 18) * ringScale,
+      grow: (6 + i * 0.9) * ringScale,
+      alpha: 0.96 - i * 0.036,
       color: i % 3 === 0 ? COLORS.yellow : i % 3 === 1 ? color : COLORS.aqua
     });
   }
 
-  for (let i = 0; i < ringCount * 10; i++) {
+  const confettiCount =
+    tier === "bullseye" ? ringCount * 12 :
+    tier === "strong" ? ringCount * 8 :
+    tier === "graze" ? ringCount * 5 : ringCount * 2;
+
+  for (let i = 0; i < confettiCount; i++) {
     confetti.push({
       x,
       y,
@@ -815,19 +1042,29 @@ function spawnBigImpact(x, y, color, power = 160) {
     });
   }
 
-  for (let i = 0; i < 30; i++) {
+  const sparkCount =
+    tier === "bullseye" ? 42 :
+    tier === "strong" ? 32 :
+    tier === "graze" ? 20 : 12;
+
+  for (let i = 0; i < sparkCount; i++) {
     sparks.push({
       x,
       y,
-      vx: Math.random() * 18 - 9,
-      vy: Math.random() * 18 - 9,
-      size: 8 + Math.random() * 15,
+      vx: Math.random() * 22 - 11,
+      vy: Math.random() * 22 - 11,
+      size: 6 + Math.random() * 16,
       alpha: 0.98,
       color: [COLORS.yellow, COLORS.aqua, COLORS.orange, COLORS.pink][Math.floor(Math.random() * 4)]
     });
   }
 
-  for (let i = 0; i < 3; i++) {
+  const burstCount =
+    tier === "bullseye" ? 5 :
+    tier === "strong" ? 4 :
+    tier === "graze" ? 3 : 2;
+
+  for (let i = 0; i < burstCount; i++) {
     starBursts.push({
       x: x + (Math.random() * 90 - 45),
       y: y + (Math.random() * 90 - 45),
@@ -838,7 +1075,51 @@ function spawnBigImpact(x, y, color, power = 160) {
     });
   }
 
-  flashes.push({ color, alpha: 0.34 });
+  for (let i = 0; i < 3; i++) {
+    shockwaves.push({
+      x,
+      y,
+      radius: 20 + i * 16,
+      grow: 10 + i * 2,
+      alpha: 0.28 - i * 0.05,
+      color
+    });
+  }
+
+  for (let i = 0; i < 10; i++) {
+    impactDust.push({
+      x,
+      y,
+      vx: Math.random() * 8 - 4,
+      vy: Math.random() * 8 - 4,
+      radius: 10 + Math.random() * 18,
+      alpha: 0.24 + Math.random() * 0.12,
+      color: i % 2 === 0 ? COLORS.white : color
+    });
+  }
+
+  flashes.push({ color, alpha: tier === "bullseye" ? 0.42 : tier === "strong" ? 0.30 : 0.18 });
+}
+
+function spawnScreenShock(x, y, tier, color) {
+  const lineCount =
+    tier === "bullseye" ? 18 :
+    tier === "strong" ? 12 :
+    tier === "graze" ? 8 : 5;
+
+  for (let i = 0; i < lineCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = tier === "bullseye" ? 14 : tier === "strong" ? 10 : 7;
+    streaks.push({
+      x,
+      y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      len: tier === "bullseye" ? 34 : tier === "strong" ? 28 : 20,
+      alpha: 0.85,
+      color
+    });
+  }
 }
 
 /* =========================
@@ -853,6 +1134,9 @@ function drawGame() {
   drawBackground();
   drawTargetGlow();
   drawProjectileTrails();
+  drawShockwaves();
+  drawImpactDust();
+  drawStreaks();
   drawHUD();
   drawTopFade();
   drawRings();
@@ -863,6 +1147,8 @@ function drawGame() {
   drawFlashes();
 
   gameCtx.restore();
+
+  drawScreenPulse();
 }
 
 function drawBackground() {
@@ -870,22 +1156,21 @@ function drawBackground() {
     const r = getCoverRect(pelhamBg.width, pelhamBg.height, gameCanvas.width, gameCanvas.height);
     gameCtx.drawImage(pelhamBg, r.x, r.y, r.w, r.h);
 
-    // mitt flash over exact mitt area
-    if (targetCenter && mittFlash > 0.01) {
+    if (activeTargetZone) {
       const g = gameCtx.createRadialGradient(
-        targetCenter.x,
-        targetCenter.y,
+        activeTargetZone.x,
+        activeTargetZone.y,
         6,
-        targetCenter.x,
-        targetCenter.y,
-        120 + mittPulse * 40
+        activeTargetZone.x,
+        activeTargetZone.y,
+        activeTargetZone.outerR * 1.15 + mittPulse * 40
       );
-      g.addColorStop(0, `rgba(255,245,180,${0.32 * mittFlash})`);
-      g.addColorStop(0.5, `rgba(255,215,80,${0.18 * mittFlash})`);
+      g.addColorStop(0, rgbaFromHex(activeTargetZone.color, 0.26 * mittFlash + 0.08));
+      g.addColorStop(0.45, rgbaFromHex(activeTargetZone.color, 0.12 * mittFlash + 0.03));
       g.addColorStop(1, "rgba(255,215,80,0)");
       gameCtx.fillStyle = g;
       gameCtx.beginPath();
-      gameCtx.arc(targetCenter.x, targetCenter.y, 130 + mittPulse * 28, 0, Math.PI * 2);
+      gameCtx.arc(activeTargetZone.x, activeTargetZone.y, activeTargetZone.outerR * 1.2 + mittPulse * 16, 0, Math.PI * 2);
       gameCtx.fill();
     }
   } else {
@@ -903,27 +1188,45 @@ function drawBackground() {
 }
 
 function drawTargetGlow() {
-  if (!targetCenter || phase === "DONE") return;
+  if (!activeTargetZone || phase === "DONE") return;
 
   const pulse = 1 + Math.sin(performance.now() * 0.006) * 0.06 + mittPulse * 0.06;
 
   const g = gameCtx.createRadialGradient(
-    targetCenter.x,
-    targetCenter.y,
+    activeTargetZone.x,
+    activeTargetZone.y,
     10,
-    targetCenter.x,
-    targetCenter.y,
-    targetOuterR * pulse
+    activeTargetZone.x,
+    activeTargetZone.y,
+    activeTargetZone.outerR * pulse
   );
 
-  g.addColorStop(0, "rgba(255,220,120,0.20)");
-  g.addColorStop(0.45, "rgba(255,220,120,0.08)");
-  g.addColorStop(1, "rgba(255,220,120,0)");
+  g.addColorStop(0, rgbaFromHex(activeTargetZone.color, 0.22));
+  g.addColorStop(0.45, rgbaFromHex(activeTargetZone.color, 0.08));
+  g.addColorStop(1, rgbaFromHex(activeTargetZone.color, 0));
 
   gameCtx.fillStyle = g;
   gameCtx.beginPath();
-  gameCtx.arc(targetCenter.x, targetCenter.y, targetOuterR * pulse, 0, Math.PI * 2);
+  gameCtx.arc(activeTargetZone.x, activeTargetZone.y, activeTargetZone.outerR * pulse, 0, Math.PI * 2);
   gameCtx.fill();
+
+  gameCtx.lineWidth = 3;
+  gameCtx.strokeStyle = rgbaFromHex(activeTargetZone.color, 0.25);
+  gameCtx.beginPath();
+  gameCtx.arc(activeTargetZone.x, activeTargetZone.y, activeTargetZone.outerR * 0.98 * pulse, 0, Math.PI * 2);
+  gameCtx.stroke();
+
+  gameCtx.lineWidth = 2.5;
+  gameCtx.strokeStyle = rgbaFromHex(activeTargetZone.color, 0.40);
+  gameCtx.beginPath();
+  gameCtx.arc(activeTargetZone.x, activeTargetZone.y, activeTargetZone.midR * pulse, 0, Math.PI * 2);
+  gameCtx.stroke();
+
+  gameCtx.lineWidth = 2;
+  gameCtx.strokeStyle = rgbaFromHex(COLORS.white, 0.58);
+  gameCtx.beginPath();
+  gameCtx.arc(activeTargetZone.x, activeTargetZone.y, activeTargetZone.innerR * pulse, 0, Math.PI * 2);
+  gameCtx.stroke();
 }
 
 function drawProjectileTrails() {
@@ -950,11 +1253,42 @@ function drawProjectileTrails() {
   });
 }
 
+function drawShockwaves() {
+  shockwaves.forEach((s) => {
+    gameCtx.strokeStyle = rgbaFromHex(s.color, s.alpha);
+    gameCtx.lineWidth = 6;
+    gameCtx.beginPath();
+    gameCtx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
+    gameCtx.stroke();
+  });
+}
+
+function drawImpactDust() {
+  impactDust.forEach((d) => {
+    gameCtx.fillStyle = rgbaFromHex(d.color, d.alpha);
+    gameCtx.beginPath();
+    gameCtx.arc(d.x, d.y, d.radius, 0, Math.PI * 2);
+    gameCtx.fill();
+  });
+}
+
+function drawStreaks() {
+  streaks.forEach((s) => {
+    gameCtx.strokeStyle = rgbaFromHex(s.color, s.alpha);
+    gameCtx.lineWidth = 3;
+    gameCtx.lineCap = "round";
+    gameCtx.beginPath();
+    gameCtx.moveTo(s.x, s.y);
+    gameCtx.lineTo(s.x - s.vx * 1.5, s.y - s.vy * 1.5);
+    gameCtx.stroke();
+  });
+}
+
 function drawHUD() {
   gameCtx.fillStyle = "rgba(6,16,28,0.78)";
   roundRectFill(30, 24, 320, 44, 18);
   roundRectFill(1040, 24, 250, 104, 20);
-  roundRectFill(420, 22, 520, 90, 24);
+  roundRectFill(390, 22, 580, 102, 24);
 
   roundRectColor(
     34,
@@ -976,9 +1310,17 @@ function drawHUD() {
 
   gameCtx.textAlign = "center";
   gameCtx.font = "bold 24px Arial";
-  gameCtx.fillText("PITCH TO PELHAM", gameCanvas.width / 2, 54);
+  gameCtx.fillText("PITCH TO PELHAM", gameCanvas.width / 2, 50);
 
-  gameCtx.font = "bold 38px Arial";
+  gameCtx.font = "bold 18px Arial";
+  gameCtx.fillStyle = activeTargetZone ? activeTargetZone.color : COLORS.white;
+  gameCtx.fillText(
+    activeTargetZone ? `TARGET: ${activeTargetZone.label}` : "TARGET LOCKING...",
+    gameCanvas.width / 2,
+    78
+  );
+
+  gameCtx.font = "bold 34px Arial";
   gameCtx.fillStyle =
     phase === "LOAD" ? COLORS.blue :
     phase === "READY" ? COLORS.green :
@@ -986,24 +1328,24 @@ function drawHUD() {
     phase === "DONE" ? COLORS.yellow :
     COLORS.white;
 
-  gameCtx.fillText(phase, gameCanvas.width / 2, 90);
+  gameCtx.fillText(phase, gameCanvas.width / 2, 108);
 
   if (feedbackTimer > 0) {
-    roundRectFill(500, 126, 395, 58, 18);
+    roundRectFill(490, 136, 415, 60, 18);
     gameCtx.fillStyle = COLORS.white;
     gameCtx.font = "bold 30px Arial";
-    gameCtx.fillText(feedbackText, gameCanvas.width / 2, 164);
+    gameCtx.fillText(feedbackText, gameCanvas.width / 2, 175);
   }
 
   gameCtx.textAlign = "start";
 }
 
 function drawTopFade() {
-  const topFade = gameCtx.createLinearGradient(0, 0, 0, 160);
-  topFade.addColorStop(0, "rgba(0,0,0,0.68)");
+  const topFade = gameCtx.createLinearGradient(0, 0, 0, 170);
+  topFade.addColorStop(0, "rgba(0,0,0,0.72)");
   topFade.addColorStop(1, "rgba(0,0,0,0)");
   gameCtx.fillStyle = topFade;
-  gameCtx.fillRect(0, 0, gameCanvas.width, 160);
+  gameCtx.fillRect(0, 0, gameCanvas.width, 170);
 }
 
 function drawRings() {
@@ -1062,10 +1404,15 @@ function drawHitLabels() {
   hitLabels.forEach((h) => {
     gameCtx.save();
     gameCtx.globalAlpha = h.alpha;
+    gameCtx.translate(h.x, h.y);
+    gameCtx.scale(h.scale, h.scale);
     gameCtx.textAlign = "center";
     gameCtx.fillStyle = h.color;
+    gameCtx.strokeStyle = "rgba(0,0,0,0.45)";
+    gameCtx.lineWidth = 6;
     gameCtx.font = "bold 28px Arial";
-    gameCtx.fillText(h.text, h.x, h.y);
+    gameCtx.strokeText(h.text, 0, 0);
+    gameCtx.fillText(h.text, 0, 0);
     gameCtx.restore();
   });
   gameCtx.textAlign = "start";
@@ -1076,6 +1423,27 @@ function drawFlashes() {
     gameCtx.fillStyle = rgbaFromHex(f.color, f.alpha * 0.20);
     gameCtx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
   });
+}
+
+function drawScreenPulse() {
+  if (screenPulse <= 0.01) return;
+
+  const alpha = Math.min(0.16, screenPulse * 0.18);
+  const grad = gameCtx.createRadialGradient(
+    gameCanvas.width * 0.5,
+    gameCanvas.height * 0.5,
+    80,
+    gameCanvas.width * 0.5,
+    gameCanvas.height * 0.5,
+    Math.max(gameCanvas.width, gameCanvas.height)
+  );
+  grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+
+  gameCtx.save();
+  gameCtx.fillStyle = grad;
+  gameCtx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
+  gameCtx.restore();
 }
 
 /* =========================
@@ -1220,6 +1588,10 @@ function clamp(v, min, max) {
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
+}
+
+function rand(min, max) {
+  return min + Math.random() * (max - min);
 }
 
 function rgbaFromHex(hex, alpha) {
